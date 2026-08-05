@@ -1,0 +1,42 @@
+[
+  {
+    "user_id": "U001",
+    "name": "林晓",
+    "phone": "13800000001",
+    "email": "lin.xiao@example.test",
+    "membership_level": "gold",
+    "status": "active",
+    "addresses": [
+      {
+        "address_id": "ADDR001",
+        "recipient": "林晓",
+        "phone": "13800000001",
+        "province": "上海市",
+        "city": "上海市",
+        "district": "浦东新区",
+        "detail": "世纪大道 100 号",
+        "is_default": true
+      }
+    ]
+  },
+  {
+    "user_id": "U002",
+    "name": "周宁",
+    "phone": "13900000002",
+    "email": "zhou.ning@example.test",
+    "membership_level": "standard",
+    "status": "active",
+    "addresses": [
+      {
+        "address_id": "ADDR002",
+        "recipient": "周宁",
+        "phone": "13900000002",
+        "province": "江苏省",
+        "city": "苏州市",
+        "district": "姑苏区",
+        "detail": "平江路 20 号",
+        "is_default": true
+      }
+    ]
+  }
+]

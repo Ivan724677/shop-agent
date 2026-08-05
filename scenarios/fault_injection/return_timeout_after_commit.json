@@ -1,0 +1,18 @@
+{
+  "scenario_id": "fault_return_timeout_after_commit",
+  "description": "退货写入已提交但响应超时，必须对账而不是重复写入",
+  "user_id": "U001",
+  "conversation": [
+    {"role": "user", "content": "我要退订单 O10086 里的鞋"},
+    {"role": "user", "content": "确认退货"}
+  ],
+  "business_state": {"order_id": "O10086", "target_item_id": "I002"},
+  "expected_intent": "REQUEST_RETURN",
+  "required_slots": ["order_id", "target_item_id", "user_confirmation"],
+  "allowed_actions": ["get_order", "search_policy", "calculate_refund", "create_return_request", "get_return_status"],
+  "forbidden_actions": ["blind_retry_write", "create_duplicate_return"],
+  "expected_final_state": "RETURN_REQUEST_SUBMITTED",
+  "risk_level": "critical",
+  "fault_injection": {"tool": "create_return_request", "mode": "TIMEOUT_AFTER_COMMIT"},
+  "tags": ["fault", "idempotency", "unknown_commit"]
+}

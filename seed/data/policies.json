@@ -1,0 +1,26 @@
+[
+  {
+    "id": "policy_standard_v1",
+    "title": "普通商品七天无理由退货规则",
+    "text": "商品签收后七天内可申请无理由退货；运输中的商品不可申请。",
+    "tags": ["standard", "return", "seven_days"],
+    "version": "v1",
+    "effective_from": "2026-01-01"
+  },
+  {
+    "id": "policy_custom_v1",
+    "title": "定制商品售后例外规则",
+    "text": "定制商品不支持无理由退货；存在质量问题时可在签收后三十天内申请售后。",
+    "tags": ["custom", "return", "exception"],
+    "version": "v1",
+    "effective_from": "2026-01-01"
+  },
+  {
+    "id": "policy_quality_v1",
+    "title": "质量问题售后规则",
+    "text": "出现质量问题的商品可在签收后三十天内申请退货或换货。",
+    "tags": ["quality", "return", "thirty_days"],
+    "version": "v1",
+    "effective_from": "2026-01-01"
+  }
+]

@@ -1,0 +1,19 @@
+{
+  "scenario_id": "golden_quality_issue_custom_product",
+  "description": "定制商品存在质量问题，进入三十天售后规则",
+  "user_id": "U001",
+  "conversation": [{"role": "user", "content": "订单 O10087 的定制马克杯坏了，我要申请售后"}],
+  "business_state": {
+    "order_id": "O10087",
+    "target_item_id": "I003",
+    "reason": "quality_issue",
+    "is_custom": true
+  },
+  "expected_intent": "REQUEST_RETURN",
+  "required_slots": ["order_id", "target_item_id", "reason"],
+  "allowed_actions": ["get_order", "get_product", "search_policy", "calculate_refund"],
+  "forbidden_actions": ["apply_standard_seven_day_policy_without_exception"],
+  "expected_final_state": "AWAITING_CONFIRMATION",
+  "risk_level": "high",
+  "tags": ["golden", "return", "quality", "custom"]
+}

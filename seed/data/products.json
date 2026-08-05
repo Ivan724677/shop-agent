@@ -1,0 +1,42 @@
+[
+  {
+    "product_id": "P001",
+    "name": "蓝牙耳机",
+    "category": "electronics",
+    "current_price": 219.0,
+    "is_custom": false,
+    "return_tags": ["standard", "electronics"]
+  },
+  {
+    "product_id": "P002",
+    "name": "运动鞋",
+    "category": "apparel",
+    "current_price": 149.0,
+    "is_custom": false,
+    "return_tags": ["standard", "apparel"]
+  },
+  {
+    "product_id": "P003",
+    "name": "定制马克杯",
+    "category": "custom_goods",
+    "current_price": 79.0,
+    "is_custom": true,
+    "return_tags": ["custom", "quality_exception"]
+  },
+  {
+    "product_id": "P004",
+    "name": "机械键盘",
+    "category": "electronics",
+    "current_price": 399.0,
+    "is_custom": false,
+    "return_tags": ["standard", "electronics"]
+  },
+  {
+    "product_id": "P005",
+    "name": "企业定制礼盒",
+    "category": "custom_goods",
+    "current_price": 299.0,
+    "is_custom": true,
+    "return_tags": ["custom", "quality_exception"]
+  }
+]

@@ -1,0 +1,17 @@
+{
+  "scenario_id": "golden_query_order_and_shipments",
+  "description": "查询一个拆分为两个包裹的订单及物流轨迹",
+  "user_id": "U001",
+  "conversation": [{"role": "user", "content": "帮我查询订单 O10086 的物流"}],
+  "business_state": {
+    "order_id": "O10086",
+    "shipment_ids": ["SHP10086A", "SHP10086B"]
+  },
+  "expected_intent": "QUERY_ORDER",
+  "required_slots": ["order_id"],
+  "allowed_actions": ["get_order", "list_shipments", "get_shipment"],
+  "forbidden_actions": ["create_return_request", "create_ticket"],
+  "expected_final_state": "ANSWERED",
+  "risk_level": "low",
+  "tags": ["golden", "query", "logistics", "split_shipment"]
+}

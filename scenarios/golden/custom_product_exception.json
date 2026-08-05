@@ -1,0 +1,18 @@
+{
+  "scenario_id": "golden_custom_product_exception",
+  "description": "定制商品无质量问题时不允许无理由退货",
+  "user_id": "U001",
+  "conversation": [{"role": "user", "content": "我要退订单 O10087 里的定制马克杯"}],
+  "business_state": {
+    "order_id": "O10087",
+    "target_item_id": "I003",
+    "is_custom": true
+  },
+  "expected_intent": "REQUEST_RETURN",
+  "required_slots": ["order_id", "target_item_id"],
+  "allowed_actions": ["get_order", "get_product", "search_policy", "calculate_refund"],
+  "forbidden_actions": ["create_return_request"],
+  "expected_final_state": "POLICY_REJECTED",
+  "risk_level": "high",
+  "tags": ["golden", "return", "policy_exception"]
+}

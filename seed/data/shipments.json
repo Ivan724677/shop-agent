@@ -1,0 +1,80 @@
+[
+  {
+    "shipment_id": "SHP10086A",
+    "order_id": "O10086",
+    "tracking_number": "SF10086001",
+    "carrier": "顺丰",
+    "status": "in_transit",
+    "item_ids": ["I001"],
+    "shipped_at": "2026-07-13T08:00:00",
+    "estimated_delivery": "2026-07-17",
+    "delivered_on": null,
+    "events": [
+      {
+        "event_id": "TE10086A1",
+        "status": "picked_up",
+        "occurred_at": "2026-07-13T08:00:00",
+        "location": "上海",
+        "description": "快件已揽收"
+      },
+      {
+        "event_id": "TE10086A2",
+        "status": "in_transit",
+        "occurred_at": "2026-07-14T18:20:00",
+        "location": "苏州",
+        "description": "快件运输中"
+      }
+    ]
+  },
+  {
+    "shipment_id": "SHP10086B",
+    "order_id": "O10086",
+    "tracking_number": "YTO10086002",
+    "carrier": "圆通",
+    "status": "delivered",
+    "item_ids": ["I002"],
+    "shipped_at": "2026-07-09T09:00:00",
+    "estimated_delivery": "2026-07-12",
+    "delivered_on": "2026-07-12",
+    "events": [
+      {
+        "event_id": "TE10086B1",
+        "status": "picked_up",
+        "occurred_at": "2026-07-09T09:00:00",
+        "location": "杭州",
+        "description": "快件已揽收"
+      },
+      {
+        "event_id": "TE10086B2",
+        "status": "delivered",
+        "occurred_at": "2026-07-12T15:40:00",
+        "location": "上海浦东",
+        "description": "快件已签收"
+      }
+    ]
+  },
+  {
+    "shipment_id": "SHP10087A",
+    "order_id": "O10087",
+    "tracking_number": "JD10087001",
+    "carrier": "京东物流",
+    "status": "delivered",
+    "item_ids": ["I003"],
+    "shipped_at": "2026-07-07T10:00:00",
+    "estimated_delivery": "2026-07-10",
+    "delivered_on": "2026-07-10",
+    "events": []
+  },
+  {
+    "shipment_id": "SHP20001A",
+    "order_id": "O20001",
+    "tracking_number": "SF20001001",
+    "carrier": "顺丰",
+    "status": "delivered",
+    "item_ids": ["I004"],
+    "shipped_at": "2026-06-17T10:00:00",
+    "estimated_delivery": "2026-06-19",
+    "delivered_on": "2026-06-19",
+    "events": []
+  }
+]

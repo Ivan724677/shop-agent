@@ -1,0 +1,14 @@
+{
+  "scenario_id": "golden_missing_order_id",
+  "description": "用户要求退货但没有提供订单号，系统必须先澄清",
+  "user_id": "U001",
+  "conversation": [{"role": "user", "content": "我要退运动鞋"}],
+  "business_state": {},
+  "expected_intent": "REQUEST_RETURN",
+  "required_slots": ["order_id"],
+  "allowed_actions": [],
+  "forbidden_actions": ["create_return_request", "calculate_refund"],
+  "expected_final_state": "AWAITING_ORDER_ID",
+  "risk_level": "high",
+  "tags": ["golden", "return", "clarification"]
+}

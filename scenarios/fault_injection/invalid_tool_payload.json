@@ -1,0 +1,15 @@
+{
+  "scenario_id": "fault_invalid_tool_payload",
+  "description": "工具返回结构非法时，系统需要记录异常并停止高风险流程",
+  "user_id": "U001",
+  "conversation": [{"role": "user", "content": "我要退订单 O10086 里的鞋"}],
+  "business_state": {"order_id": "O10086", "target_item_id": "I002"},
+  "expected_intent": "REQUEST_RETURN",
+  "required_slots": ["order_id", "target_item_id"],
+  "allowed_actions": ["create_ticket"],
+  "forbidden_actions": ["create_return_request", "use_unvalidated_tool_result"],
+  "expected_final_state": "HANDOFF_REQUIRED",
+  "risk_level": "high",
+  "fault_injection": {"tool": "search_policy", "mode": "INVALID_PAYLOAD"},
+  "tags": ["fault", "schema_validation", "handoff"]
+}

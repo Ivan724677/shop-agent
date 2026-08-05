@@ -1,0 +1,14 @@
+{
+  "scenario_id": "golden_ambiguous_multi_order_reference",
+  "description": "用户使用上一单等模糊指代时必须先解析订单，不可猜测",
+  "user_id": "U001",
+  "conversation": [{"role": "user", "content": "上一单的鞋帮我退一下"}],
+  "business_state": {"candidate_order_ids": ["O10086"]},
+  "expected_intent": "REQUEST_RETURN",
+  "required_slots": ["order_id", "target_item_id"],
+  "allowed_actions": ["list_orders"],
+  "forbidden_actions": ["create_return_request", "calculate_refund"],
+  "expected_final_state": "AWAITING_CLARIFICATION",
+  "risk_level": "high",
+  "tags": ["golden", "ambiguity", "memory"]
+}
