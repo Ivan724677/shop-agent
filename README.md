@@ -1,6 +1,6 @@
 # 风险感知售后客服 Agent
 
-这是一个面向电商售后场景的系统型 Agent 项目。当前完成的是阶段一：先建立可被 Agent 查询和修改的业务模拟器、正式状态机以及可回放的场景语料，暂时不依赖外部大模型 API。
+这是一个面向电商售后场景的系统型 Agent 项目。当前完成了阶段一业务模拟器，以及阶段二的 DeepSeek V4 Flash 单 Agent ReAct baseline。
 
 阶段一的目标不是做一个更长的聊天 Demo，而是让后续 Agent 面对真实的业务约束：用户、商品、订单项、拆分物流、退货申请、退款流水和人工工单彼此独立，所有高风险写操作都必须经过服务端校验和状态转换。
 
@@ -17,12 +17,18 @@
 - JSON 种子数据：业务数据不再散落在 Agent 代码中，可以重复初始化。
 - 场景语料：手工核心场景、120 条固定随机种子生成场景和故障注入场景。
 - 现有 Agent 仍然保留：商品级部分退货、政策证据、用户确认、幂等写入、未知提交恢复和 trace 监控。
+- ReAct baseline：DeepSeek 原生 tool calls、工具观察回传、多步循环、原始对话历史、token usage 和工具 trace。
 
 ## 目录
 
 ```text
 agent-project/
 ├── agent.py
+├── baseline/
+│   ├── deepseek_client.py # DeepSeek OpenAI-compatible Chat Completions 客户端
+│   ├── tool_catalog.py    # 工具 JSON Schema 和会话身份绑定执行器
+│   ├── react_agent.py     # 单 Agent ReAct 工具循环
+│   └── cli.py             # DeepSeek baseline 交互入口
 ├── domain/
 │   ├── models.py          # 用户、商品、订单、物流、退货、退款、工单
 │   └── state_machine.py   # 正式状态枚举和合法转换表
@@ -39,6 +45,7 @@ agent-project/
 │   ├── loader.py          # 场景语料加载器
 │   └── generate.py        # 固定种子批量生成器
 ├── test_agent.py          # 原有 Agent 回归测试
+├── test_baseline.py       # ReAct、工具错误和 DeepSeek 请求契约测试
 └── test_stage_one.py      # 领域模型、状态机、工具和语料测试
 ```
 
@@ -96,6 +103,52 @@ python3 agent.py
 trace
 exit
 ```
+
+## 阶段二：DeepSeek 单 Agent ReAct baseline
+
+官方 API 模型 ID 为 `deepseek-v4-flash`，基础地址为 `https://api.deepseek.com`。baseline 使用 Chat Completions 原生 tool calls，并关闭 thinking mode，让执行链保持简单、成本低且容易作为后续实验对照组。
+
+先在当前终端设置环境变量。不要把真实 key 写入 `.env.example`、README 或代码：
+
+```bash
+export DEEPSEEK_API_KEY="你的新 API key"
+export DEEPSEEK_MODEL="deepseek-v4-flash"
+export DEEPSEEK_BASE_URL="https://api.deepseek.com"
+```
+
+启动 baseline：
+
+```bash
+python3 -m baseline.cli --user-id U001
+```
+
+交互命令：
+
+```text
+trace    查看模型决策和工具调用轨迹
+history  查看发送给模型的原始消息历史
+reset    重置当前会话
+exit     退出
+```
+
+baseline 的执行链只有：
+
+```text
+用户消息
+→ DeepSeek 决定直接回复或调用工具
+→ 本地 ToolGateway 执行
+→ 工具结果作为 tool message 返回 DeepSeek
+→ DeepSeek 继续调用工具或生成最终回答
+```
+
+它刻意没有使用阶段一 `TaskState` 中的意图、槽位、目标商品、排除商品、政策证据、确认状态等结构化字段，也没有摘要记忆、路由器或故障恢复规划。它只保留原始消息历史，并设置最多 6 次模型决策和每步最多 4 个工具调用，防止失控循环。
+
+有两类底层约束仍然保留，因为它们属于业务安全边界，不属于 Agent 智能：
+
+- 当前用户身份由会话注入，模型不能伪造 `user_id` 访问其他用户订单。
+- 高风险写操作仍由仓储层校验确认、商品归属、政策、金额和幂等键。
+
+这使 baseline 可以真实暴露意图误判、工具选错、参数不完整、多轮历史污染和工具链规划失败，同时不会为了制造 baseline 差异而主动移除最基本的鉴权和资金安全约束。
 
 ## 场景格式
 
