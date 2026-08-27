@@ -25,6 +25,7 @@ class BaselineTraceEvent:
     sequence: int
     timestamp: str
     event_type: str
+    conversation_turn: int
     model_step: int
     detail: dict[str, Any] = field(default_factory=dict)
 
@@ -53,10 +54,12 @@ class ReActBaselineAgent:
             {"role": "system", "content": self.system_prompt}
         ]
         self.trace: list[BaselineTraceEvent] = []
+        self.turn_index = 0
 
     def handle(self, user_message: str) -> str:
         if not user_message.strip():
             raise ValueError("user_message 不能为空。")
+        self.turn_index += 1
         self.messages.append({"role": "user", "content": user_message.strip()})
 
         for model_step in range(1, self.max_steps + 1):
@@ -96,6 +99,7 @@ class ReActBaselineAgent:
     def reset(self) -> None:
         self.messages = [{"role": "system", "content": self.system_prompt}]
         self.trace = []
+        self.turn_index = 0
 
     def trace_as_json(self) -> str:
         return json.dumps(
@@ -217,6 +221,7 @@ class ReActBaselineAgent:
                 sequence=len(self.trace) + 1,
                 timestamp=datetime.now().isoformat(timespec="milliseconds"),
                 event_type=event_type,
+                conversation_turn=self.turn_index,
                 model_step=model_step,
                 detail=detail,
             )

@@ -125,7 +125,10 @@ class ToolGateway:
                 "get_shipment", "low", {"user_id", "shipment_id"}, self._get_shipment
             ),
             "search_policy": ToolSpec(
-                "search_policy", "low", {"order_id", "item_id", "reason"}, self._search_policy
+                "search_policy",
+                "low",
+                {"user_id", "order_id", "item_id", "reason"},
+                self._search_policy,
             ),
             "calculate_refund": ToolSpec(
                 "calculate_refund",
@@ -152,7 +155,7 @@ class ToolGateway:
                 "get_return_status", "low", {"idempotency_key"}, self._get_return_status
             ),
             "get_refund_status": ToolSpec(
-                "get_refund_status", "low", {"refund_id"}, self._get_refund_status
+                "get_refund_status", "low", {"user_id", "refund_id"}, self._get_refund_status
             ),
             "create_ticket": ToolSpec(
                 "create_ticket",
@@ -373,10 +376,10 @@ class ToolGateway:
     def _get_shipment(self, user_id: str, shipment_id: str) -> dict[str, Any]:
         return {"shipment": self._serialize_shipment(self.store.get_shipment(user_id, shipment_id))}
 
-    def _search_policy(self, order_id: str, item_id: str, reason: str) -> dict[str, Any]:
-        order = self.store.orders.get(order_id)
-        if order is None:
-            raise ToolError("ORDER_NOT_FOUND", f"订单 {order_id} 不存在。")
+    def _search_policy(
+        self, user_id: str, order_id: str, item_id: str, reason: str
+    ) -> dict[str, Any]:
+        order = self.store.get_order(user_id, order_id)
         item = next((item for item in order.items if item.item_id == item_id), None)
         if item is None:
             raise ToolError("ITEM_NOT_IN_ORDER", "商品不属于该订单。")
@@ -414,10 +417,12 @@ class ToolGateway:
             "request": self._serialize_return(request) if request else None,
         }
 
-    def _get_refund_status(self, refund_id: str) -> dict[str, Any]:
+    def _get_refund_status(self, user_id: str, refund_id: str) -> dict[str, Any]:
         refund = self.store.refund_transactions.get(refund_id)
         if refund is None:
             raise ToolError("REFUND_NOT_FOUND", f"退款流水 {refund_id} 不存在。")
+        if refund.user_id != user_id:
+            raise ToolError("FORBIDDEN", "当前用户无权访问该退款流水。")
         return {"refund": self._serialize_refund(refund)}
 
     def _create_ticket(self, **kwargs: Any) -> dict[str, Any]:
@@ -599,6 +604,7 @@ class CustomerServiceAgent:
         for item in selected_items:
             policy_result = self.gateway.call(
                 "search_policy",
+                user_id=self.user_id,
                 order_id=order.order_id,
                 item_id=item.item_id,
                 reason=self.state.reason,

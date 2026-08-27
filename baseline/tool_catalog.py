@@ -147,8 +147,10 @@ SESSION_SCOPED_TOOLS = {
     "get_order",
     "list_shipments",
     "get_shipment",
+    "search_policy",
     "calculate_refund",
     "create_return_request",
+    "get_refund_status",
     "create_ticket",
 }
 

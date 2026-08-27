@@ -145,6 +145,7 @@ class InMemoryStore:
 
         if not user_confirmation:
             raise ToolError("CONFIRMATION_REQUIRED", "高风险操作需要用户明确确认。")
+        # 幂等逻辑
         if idempotency_key in self.idempotency_index:
             request_id = self.idempotency_index[idempotency_key]
             return self.return_requests[request_id]

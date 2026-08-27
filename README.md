@@ -1,6 +1,6 @@
 # 风险感知售后客服 Agent
 
-这是一个面向电商售后场景的系统型 Agent 项目。当前完成了阶段一业务模拟器，以及阶段二的 DeepSeek V4 Flash 单 Agent ReAct baseline。
+这是一个面向电商售后场景的系统型 Agent 项目。当前完成了阶段一业务模拟器、阶段二 DeepSeek V4 Flash 单 Agent ReAct baseline，以及阶段三结构化状态与多轮记忆 Agent。
 
 阶段一的目标不是做一个更长的聊天 Demo，而是让后续 Agent 面对真实的业务约束：用户、商品、订单项、拆分物流、退货申请、退款流水和人工工单彼此独立，所有高风险写操作都必须经过服务端校验和状态转换。
 
@@ -18,6 +18,8 @@
 - 场景语料：手工核心场景、120 条固定随机种子生成场景和故障注入场景。
 - 现有 Agent 仍然保留：商品级部分退货、政策证据、用户确认、幂等写入、未知提交恢复和 trace 监控。
 - ReAct baseline：DeepSeek 原生 tool calls、工具观察回传、多步循环、原始对话历史、token usage 和工具 trace。
+- 结构化 Agent：确定性信号与 DeepSeek 语义帧融合，显式维护槽位、任务阶段、风险等级、缺失字段、确认范围和多轮记忆。
+- 对照评测：让 baseline 与结构化 Agent 在相同初始数据和相同场景上分别运行，统计最终状态、工具错误、不安全写入、调用次数和 token。
 
 ## 目录
 
@@ -29,6 +31,18 @@ agent-project/
 │   ├── tool_catalog.py    # 工具 JSON Schema 和会话身份绑定执行器
 │   ├── react_agent.py     # 单 Agent ReAct 工具循环
 │   └── cli.py             # DeepSeek baseline 交互入口
+├── structured/
+│   ├── models.py          # 语义帧、槽位、任务状态、确认范围和记忆模型
+│   ├── extractor.py       # 高精度 ID、否定范围和确认语句提取
+│   ├── semantic_parser.py # DeepSeek 受约束语义帧解析
+│   ├── reducer.py         # 确定性信号与 LLM 候选的状态归并
+│   ├── state_machine.py   # 对话任务状态转换表
+│   ├── policy.py          # 基于状态的确定性工具决策与故障恢复
+│   ├── agent.py           # 阶段三主执行链、记忆和 trace
+│   └── cli.py             # 结构化 Agent 交互入口
+├── evaluation/
+│   ├── comparison.py      # 同场景双版本回放与指标计算
+│   └── compare_cli.py     # 真实 DeepSeek 对比入口
 ├── domain/
 │   ├── models.py          # 用户、商品、订单、物流、退货、退款、工单
 │   └── state_machine.py   # 正式状态枚举和合法转换表
@@ -46,7 +60,9 @@ agent-project/
 │   └── generate.py        # 固定种子批量生成器
 ├── test_agent.py          # 原有 Agent 回归测试
 ├── test_baseline.py       # ReAct、工具错误和 DeepSeek 请求契约测试
-└── test_stage_one.py      # 领域模型、状态机、工具和语料测试
+├── test_stage_one.py      # 领域模型、状态机、工具和语料测试
+├── test_stage_three.py    # 多轮状态、确认范围、冲突与故障恢复测试
+└── test_comparison.py     # baseline 失效注入与结构化 Agent 对照测试
 ```
 
 ## 运行
@@ -149,6 +165,76 @@ baseline 的执行链只有：
 - 高风险写操作仍由仓储层校验确认、商品归属、政策、金额和幂等键。
 
 这使 baseline 可以真实暴露意图误判、工具选错、参数不完整、多轮历史污染和工具链规划失败，同时不会为了制造 baseline 差异而主动移除最基本的鉴权和资金安全约束。
+
+## 阶段三：结构化状态与多轮记忆
+
+阶段三不是用正则替换 LLM，也不是继续让 LLM 自由决定动作，而是把两者放在不同的权限层：
+
+```text
+用户消息
+→ 确定性提取器：订单号、商品号、精确确认、否定范围
+→ DeepSeek 语义解析器：自然语言意图、模糊商品指代、咨询语气
+→ StateReducer：按来源优先级归并候选，记录冲突
+→ StructuredTaskState：槽位、阶段、风险、缺失字段、确认范围
+→ DialoguePolicy：依据状态确定下一步工具或追问
+→ ToolGateway：执行并返回可审计事实
+→ 状态更新与回答
+```
+
+LLM 输出的是 `SemanticFrame` 候选，不直接授权工具调用。订单号、商品号、明确排除和精确确认优先采用确定性结果；工具返回的数据优先于语言猜测；高风险写操作必须同时满足政策、金额、商品范围和绑定确认。
+
+当前显式任务状态包括：
+
+- 意图：订单查询、物流查询、退货、转人工；
+- 阶段：`idle`、`collecting_info`、`resolving_entities`、`checking_policy`、`awaiting_confirmation`、`executing`、`completed`、`rejected`、`handoff`；
+- 槽位：值、来源、置信度、证据文本和最后更新时间；
+- 当前订单、选中商品、排除商品、原因和退款金额；
+- 缺失字段、风险等级、政策证据和解析冲突；
+- `PendingAction`：绑定订单、商品集合、金额、原因、请求轮次和幂等键。
+
+记忆分为三层：工作记忆保存当前任务状态，事实记忆保存工具观测，情节记忆保存有限长度的每轮输入、语义帧、前后状态、工具和回复。发送给语义模型的是最小状态上下文，不是无限增长的原始聊天记录。
+
+不调用 API 调试状态机：
+
+```bash
+python3 -m structured.cli --offline --user-id U001
+```
+
+接入 DeepSeek 运行完整结构化 Agent：
+
+```bash
+export DEEPSEEK_API_KEY="你的新 API key"
+python3 -m structured.cli --user-id U001
+```
+
+可以用以下多轮输入观察状态：
+
+```text
+我要退鞋
+订单号是 O10086
+state
+确认退货
+memory
+trace
+```
+
+`state` 查看当前工作记忆，`memory` 查看每轮状态变化，`trace` 查看解析、状态归并、工具和策略轨迹。
+
+### baseline 与结构化版本对比
+
+真实 DeepSeek 对比会为每个版本创建独立的业务数据副本，并在同一批 golden scenarios 上回放：
+
+```bash
+python3 -m evaluation.compare_cli \
+  --limit 8 \
+  --output outputs/stage3-comparison.json
+```
+
+输出包括：最终状态准确率、不安全写入率、平均工具调用数、平均模型请求数、prompt/completion tokens，以及每个场景的回复、工具错误和违规明细。
+
+`test_comparison.py` 另有一个确定性“模型提前确认”故障注入，用来证明评测器能捕获 baseline 的 premature write，并验证结构化版本不会把 LLM 候选确认直接变成写权限。它是安全机制的回归实验，不冒充真实 DeepSeek 模型跑分。真实模型结果只由上述对比命令产生。
+
+完整设计、状态不变量和实验解释见 [`docs/stage3-structured-state.md`](docs/stage3-structured-state.md)。
 
 ## 场景格式
 
