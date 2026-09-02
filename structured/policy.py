@@ -341,11 +341,18 @@ class DialoguePolicy:
             {
                 "subject": "售后人工处理",
                 "description": reason,
+                "idempotency_key": f"ticket:{state.task_id}:{reason}",
                 **({"order_id": state.order_id} if state.order_id else {}),
             },
         )
+        if result.status == "UNKNOWN_COMMIT":
+            result = self._observe(
+                state,
+                "get_ticket_status",
+                {"idempotency_key": f"ticket:{state.task_id}:{reason}"},
+            )
         transition_state(state, TaskStage.HANDOFF)
-        if result.ok:
+        if result.ok and result.data.get("ticket"):
             ticket = result.data["ticket"]
             return PolicyOutcome(
                 f"已创建人工工单 {ticket['ticket_id']}，请等待客服处理。", state.stage

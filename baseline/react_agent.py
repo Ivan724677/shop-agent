@@ -180,6 +180,9 @@ class ReActBaselineAgent:
                 "ok": result.ok,
                 "status": result.status,
                 "error_code": result.error_code,
+                "audit_id": result.metadata.get("audit_id"),
+                "attempts": result.metadata.get("attempts", 0),
+                "reconciliation_tool": result.metadata.get("reconciliation_tool"),
             },
         )
 

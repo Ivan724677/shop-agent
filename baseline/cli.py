@@ -40,7 +40,7 @@ def main() -> int:
     )
     print(
         f"DeepSeek ReAct baseline 已启动，model={client.model}，user={args.user_id}。"
-        "输入 trace 查看轨迹，history 查看消息，reset 重置，exit 退出。"
+        "输入 trace 查看轨迹，audit 查看工具审计，history 查看消息，reset 重置，exit 退出。"
     )
     while True:
         try:
@@ -56,6 +56,9 @@ def main() -> int:
             continue
         if text.lower() == "history":
             print(json.dumps(agent.messages, ensure_ascii=False, indent=2))
+            continue
+        if text.lower() == "audit":
+            print(agent.tool_executor.audit_as_json())
             continue
         if text.lower() == "reset":
             agent.reset()

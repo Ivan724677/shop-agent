@@ -49,14 +49,15 @@ def main() -> int:
         parser = DeepSeekSemanticParser(client)
         model_name = client.model
 
+    tool_executor = SessionToolExecutor(user_id=args.user_id)
     agent = StructuredCustomerServiceAgent(
         semantic_parser=parser,
-        tool_executor=SessionToolExecutor(user_id=args.user_id),
+        tool_executor=tool_executor,
         user_id=args.user_id,
     )
     print(
         f"结构化 Agent 已启动，parser={model_name}，user={args.user_id}。"
-        "输入 state/memory/trace 查看内部状态，reset 重置，exit 退出。"
+        "输入 state/memory/trace 查看内部状态，audit 查看工具审计，reset 重置，exit 退出。"
     )
     while True:
         try:
@@ -75,6 +76,9 @@ def main() -> int:
             continue
         if text.lower() == "trace":
             print(agent.trace_as_json())
+            continue
+        if text.lower() == "audit":
+            print(tool_executor.audit_as_json())
             continue
         if text.lower() == "reset":
             agent.reset()

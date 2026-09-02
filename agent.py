@@ -34,6 +34,7 @@ class ToolResult:
     error_code: Optional[str] = None
     message: str = ""
     retryable: bool = False
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -112,7 +113,7 @@ class ToolGateway:
         self.knowledge = knowledge
         self.trace_id = str(uuid.uuid4())
         self.trace: list[TraceEvent] = []
-        self.fail_next: dict[str, str] = {}
+        self.fail_next: dict[str, list[str]] = {}
         self.tools: dict[str, ToolSpec] = {
             "get_user": ToolSpec("get_user", "low", {"user_id"}, self._get_user),
             "get_product": ToolSpec("get_product", "low", {"product_id"}, self._get_product),
@@ -152,7 +153,10 @@ class ToolGateway:
                 side_effect=True,
             ),
             "get_return_status": ToolSpec(
-                "get_return_status", "low", {"idempotency_key"}, self._get_return_status
+                "get_return_status",
+                "low",
+                {"user_id", "idempotency_key"},
+                self._get_return_status,
             ),
             "get_refund_status": ToolSpec(
                 "get_refund_status", "low", {"user_id", "refund_id"}, self._get_refund_status
@@ -164,13 +168,23 @@ class ToolGateway:
                 self._create_ticket,
                 side_effect=True,
             ),
+            "get_ticket_status": ToolSpec(
+                "get_ticket_status",
+                "low",
+                {"user_id", "idempotency_key"},
+                self._get_ticket_status,
+            ),
         }
 
     def inject_failure_once(self, tool_name: str, failure_mode: str) -> None:
         """failure_mode 可为 TIMEOUT 或 TIMEOUT_AFTER_COMMIT。"""
         if tool_name not in self.tools:
             raise ValueError(f"未知工具：{tool_name}")
-        self.fail_next[tool_name] = failure_mode
+        self.fail_next.setdefault(tool_name, []).append(failure_mode)
+
+    def inject_failures(self, tool_name: str, *failure_modes: str) -> None:
+        for failure_mode in failure_modes:
+            self.inject_failure_once(tool_name, failure_mode)
 
     def call(self, tool_name: str, **kwargs: Any) -> ToolResult:
         if tool_name not in self.tools:
@@ -187,7 +201,10 @@ class ToolGateway:
             self._record(spec, kwargs, result)
             return result
 
-        failure_mode = self.fail_next.pop(tool_name, None)
+        failures = self.fail_next.get(tool_name, [])
+        failure_mode = failures.pop(0) if failures else None
+        if not failures:
+            self.fail_next.pop(tool_name, None)
         try:
             if failure_mode == "TIMEOUT":
                 result = ToolResult(
@@ -408,10 +425,10 @@ class ToolGateway:
         }
 
     def _create_return_request(self, **kwargs: Any) -> dict[str, Any]:
-        return self.store.create_return_request(**kwargs)
+        return self._serialize_return(self.store.create_return_request(**kwargs))
 
-    def _get_return_status(self, idempotency_key: str) -> dict[str, Any]:
-        request = self.store.get_return_by_idempotency(idempotency_key)
+    def _get_return_status(self, user_id: str, idempotency_key: str) -> dict[str, Any]:
+        request = self.store.get_return_by_idempotency(user_id, idempotency_key)
         return {
             "found": request is not None,
             "request": self._serialize_return(request) if request else None,
@@ -438,6 +455,23 @@ class ToolGateway:
             "type": str(ticket.ticket_type),
             "created_at": ticket.created_at.isoformat(),
         }}
+
+    def _get_ticket_status(self, user_id: str, idempotency_key: str) -> dict[str, Any]:
+        ticket = self.store.get_ticket_by_idempotency(user_id, idempotency_key)
+        return {
+            "found": ticket is not None,
+            "ticket": (
+                {
+                    "ticket_id": ticket.ticket_id,
+                    "user_id": ticket.user_id,
+                    "order_id": ticket.order_id,
+                    "subject": ticket.subject,
+                    "status": str(ticket.status),
+                }
+                if ticket
+                else None
+            ),
+        }
 
 
 class RuleBasedNLU:
@@ -656,7 +690,11 @@ class CustomerServiceAgent:
         )
         if creation.status == "UNKNOWN_COMMIT":
             # 绝不直接重试写操作，先以幂等键做状态对账。
-            reconciliation = self.gateway.call("get_return_status", idempotency_key=idempotency_key)
+            reconciliation = self.gateway.call(
+                "get_return_status",
+                user_id=self.user_id,
+                idempotency_key=idempotency_key,
+            )
             request = reconciliation.data.get("request") if reconciliation.ok else None
             if request:
                 self.state.completed = True

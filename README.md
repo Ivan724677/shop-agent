@@ -1,6 +1,6 @@
 # 风险感知售后客服 Agent
 
-这是一个面向电商售后场景的系统型 Agent 项目。当前完成了阶段一业务模拟器、阶段二 DeepSeek V4 Flash 单 Agent ReAct baseline，以及阶段三结构化状态与多轮记忆 Agent。
+这是一个面向电商售后场景的系统型 Agent 项目。当前完成了阶段一业务模拟器、阶段二 DeepSeek V4 Flash 单 Agent ReAct baseline、阶段三结构化状态与多轮记忆 Agent，以及阶段四 MCP 工具协议与可靠性层。
 
 阶段一的目标不是做一个更长的聊天 Demo，而是让后续 Agent 面对真实的业务约束：用户、商品、订单项、拆分物流、退货申请、退款流水和人工工单彼此独立，所有高风险写操作都必须经过服务端校验和状态转换。
 
@@ -20,6 +20,8 @@
 - ReAct baseline：DeepSeek 原生 tool calls、工具观察回传、多步循环、原始对话历史、token usage 和工具 trace。
 - 结构化 Agent：确定性信号与 DeepSeek 语义帧融合，显式维护槽位、任务阶段、风险等级、缺失字段、确认范围和多轮记忆。
 - 对照评测：让 baseline 与结构化 Agent 在相同初始数据和相同场景上分别运行，统计最终状态、工具错误、不安全写入、调用次数和 token。
+- MCP 工具层：统一 `tools/list`、`tools/call`、输入/输出 schema、scope 权限、会话身份注入和 JSON-RPC stdio 入口。
+- 工具可靠性：真实执行超时、只读重试、熔断器、写操作幂等、未知提交对账和脱敏操作审计。
 
 ## 目录
 
@@ -43,6 +45,13 @@ agent-project/
 ├── evaluation/
 │   ├── comparison.py      # 同场景双版本回放与指标计算
 │   └── compare_cli.py     # 真实 DeepSeek 对比入口
+├── mcp_server/
+│   ├── catalog.py         # MCP 工具目录、input/output schema 与权限元数据
+│   ├── validation.py      # 确定性 JSON Schema 边界校验
+│   ├── models.py          # 会话权限、熔断状态与审计模型
+│   ├── server.py          # tools/list、tools/call 和可靠性执行管线
+│   ├── client.py          # Agent 使用的进程内 MCP Client
+│   └── cli.py             # JSON-lines stdio MCP Server 入口
 ├── domain/
 │   ├── models.py          # 用户、商品、订单、物流、退货、退款、工单
 │   └── state_machine.py   # 正式状态枚举和合法转换表
@@ -62,6 +71,7 @@ agent-project/
 ├── test_baseline.py       # ReAct、工具错误和 DeepSeek 请求契约测试
 ├── test_stage_one.py      # 领域模型、状态机、工具和语料测试
 ├── test_stage_three.py    # 多轮状态、确认范围、冲突与故障恢复测试
+├── test_stage_four.py     # MCP、权限、超时、重试、熔断、幂等与审计测试
 └── test_comparison.py     # baseline 失效注入与结构化 Agent 对照测试
 ```
 
@@ -143,6 +153,7 @@ python3 -m baseline.cli --user-id U001
 ```text
 trace    查看模型决策和工具调用轨迹
 history  查看发送给模型的原始消息历史
+audit    查看 MCP 工具操作审计
 reset    重置当前会话
 exit     退出
 ```
@@ -152,7 +163,9 @@ baseline 的执行链只有：
 ```text
 用户消息
 → DeepSeek 决定直接回复或调用工具
-→ 本地 ToolGateway 执行
+→ MCP Client 调用 tools/call
+→ MCP Server 完成权限、schema 与可靠性控制
+→ 本地 ToolGateway 执行业务工具
 → 工具结果作为 tool message 返回 DeepSeek
 → DeepSeek 继续调用工具或生成最终回答
 ```
@@ -236,6 +249,66 @@ python3 -m evaluation.compare_cli \
 
 完整设计、状态不变量和实验解释见 [`docs/stage3-structured-state.md`](docs/stage3-structured-state.md)。
 
+## 阶段四：MCP 与工具可靠性层
+
+阶段四把工具从 Agent 内部函数升级成独立信任边界。阶段二和阶段三现在共用同一个执行链：
+
+```text
+Agent / LLM
+→ model-facing OpenAI tool schema
+→ InProcessMCPClient
+→ MCP tools/call
+→ input schema validation
+→ authenticated identity + scope authorization
+→ circuit breaker
+→ timeout / retry policy
+→ ToolGateway + repository business guards
+→ output schema validation
+→ audit event
+→ MCP result / UNKNOWN_COMMIT
+```
+
+工具定义只有一个权威来源：[`mcp_server/catalog.py`](mcp_server/catalog.py)。同一份定义生成 DeepSeek 使用的 function tools 和 MCP `tools/list` 返回值，并携带：
+
+- 输入与输出 JSON Schema；
+- 必需权限 scope；
+- 风险等级和是否有副作用；
+- timeout 与最大尝试次数；
+- 幂等键字段；
+- 未知提交时应使用的对账工具。
+
+### 可靠性策略
+
+- 只读工具：瞬态 timeout 或非法响应可以做有限指数退避重试，默认最多 2 次尝试。
+- 写工具：不自动重试。执行超时或响应丢失统一返回 `UNKNOWN_COMMIT`，并给出 `reconciliation_tool`。
+- 熔断器：一个工具连续出现瞬态失败后进入 `open`，恢复窗口后只允许一次 `half_open` 探测。
+- 幂等：退货和工单都要求幂等键；同键同参数返回原记录，同键不同参数返回 `IDEMPOTENCY_KEY_REUSE`。
+- 权限：`user_id` 来自认证会话，模型不能传入或覆盖；工具还需要 `orders:read`、`returns:write` 等 scope。
+- 审计：每个逻辑工具调用记录 actor、request/correlation ID、决策、尝试次数、耗时、熔断状态和参数摘要。描述等敏感字段被脱敏，幂等键只保留哈希。
+- 双层校验：MCP 层校验协议、权限与 schema；仓储层再次校验订单归属、政策、金额、确认和幂等，不能只依赖网关。
+
+启动 JSON-lines stdio MCP Server：
+
+```bash
+python3 -m mcp_server.cli --user-id U001
+```
+
+支持的 MCP JSON-RPC 方法是 `initialize`、`ping`、`tools/list`、`tools/call` 和 `notifications/initialized`。当前阶段聚焦工具协议，不宣称实现 resources、prompts、远程 OAuth 或所有 MCP transport。
+
+在结构化 Agent 中输入 `audit` 可以查看 MCP 审计：
+
+```bash
+python3 -m structured.cli --offline --user-id U001
+```
+
+故障与边界测试：
+
+```bash
+python3 -m unittest -v test_stage_four.py
+```
+
+完整设计、不变量、重试边界和未知状态处理见 [`docs/stage4-mcp-reliability.md`](docs/stage4-mcp-reliability.md)。
+
 ## 场景格式
 
 每条场景同时保存用户输入、初始业务状态、期望意图、必需槽位、允许动作、禁止动作、期望最终状态和风险等级。它不是普通的聊天样例，而是后续端到端评测的 ground truth。
@@ -304,4 +377,4 @@ ToolGateway	  参数缺失	       Agent 忘了传 idempotency_key
 LLM 的判断只是"建议"，代码层以数据为权威，逐层校验，高风险路径上不信任模型的任何输出。
 
 
-后续阶段可以在此基础上继续拆分 MCP Server、加入多 Agent Router、完善政策检索、增加用户模拟器和 Monitor Agent，并用这些场景做端到端回放和消融实验。
+后续阶段可以在此基础上加入多 Agent Router、完善政策检索、增加用户模拟器和 Monitor Agent，并用这些场景做端到端回放和消融实验。

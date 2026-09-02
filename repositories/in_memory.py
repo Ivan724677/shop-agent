@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from functools import wraps
 from pathlib import Path
+from threading import RLock
 from typing import Any, Optional
 
 from domain.models import (
@@ -36,6 +38,15 @@ from seed.loader import load_seed_data
 DEFAULT_BUSINESS_DATE = date(2026, 7, 16)
 
 
+def synchronized_write(method):
+    @wraps(method)
+    def wrapped(self, *args, **kwargs):
+        with self._write_lock:
+            return method(self, *args, **kwargs)
+
+    return wrapped
+
+
 class ToolError(Exception):
     def __init__(self, code: str, message: str, retryable: bool = False) -> None:
         super().__init__(message)
@@ -57,6 +68,8 @@ class InMemoryStore:
         self.refund_transactions: dict[str, RefundTransaction] = {}
         self.tickets: dict[str, Ticket] = {}
         self.idempotency_index: dict[str, str] = {}
+        self.ticket_idempotency_index: dict[str, str] = {}
+        self._write_lock = RLock()
 
     def get_user(self, user_id: str) -> User:
         user = self.users.get(user_id)
@@ -131,6 +144,7 @@ class InMemoryStore:
             return False, f"{item.name} 已签收 {elapsed_days} 天，超过 {allowed_days} 天售后期限。"
         return True, "eligible"
 
+    @synchronized_write
     def create_return_request(
         self,
         user_id: str,
@@ -148,7 +162,20 @@ class InMemoryStore:
         # 幂等逻辑
         if idempotency_key in self.idempotency_index:
             request_id = self.idempotency_index[idempotency_key]
-            return self.return_requests[request_id]
+            existing = self.return_requests[request_id]
+            same_operation = (
+                existing.user_id == user_id
+                and existing.order_id == order_id
+                and existing.item_ids == sorted(item_ids)
+                and round(existing.refund_amount, 2) == round(refund_amount, 2)
+                and existing.reason == reason
+            )
+            if not same_operation:
+                raise ToolError(
+                    "IDEMPOTENCY_KEY_REUSE",
+                    "同一幂等键不能用于不同用户或不同退货参数。",
+                )
+            return existing
 
         order = self.get_order(user_id, order_id)
         if not item_ids:
@@ -243,6 +270,7 @@ class InMemoryStore:
                 refund.settled_at = now
         return refund
 
+    @synchronized_write
     def create_ticket(
         self,
         user_id: str,
@@ -251,7 +279,22 @@ class InMemoryStore:
         ticket_type: TicketType = TicketType.AFTER_SALES,
         priority: TicketPriority = TicketPriority.NORMAL,
         order_id: str | None = None,
+        idempotency_key: str | None = None,
     ) -> Ticket:
+        if idempotency_key and idempotency_key in self.ticket_idempotency_index:
+            existing = self.tickets[self.ticket_idempotency_index[idempotency_key]]
+            same_operation = (
+                existing.user_id == user_id
+                and existing.order_id == order_id
+                and existing.subject == subject
+                and existing.description == description
+            )
+            if not same_operation:
+                raise ToolError(
+                    "IDEMPOTENCY_KEY_REUSE",
+                    "同一幂等键不能用于不同用户或不同工单参数。",
+                )
+            return existing
         if order_id is not None:
             self.get_order(user_id, order_id)
         now = datetime.now()
@@ -271,6 +314,8 @@ class InMemoryStore:
             timeline=[StatusChange(None, TicketStatus.OPEN.value, now, "system", "创建工单")],
         )
         self.tickets[ticket_id] = ticket
+        if idempotency_key:
+            self.ticket_idempotency_index[idempotency_key] = ticket_id
         return ticket
 
     def transition_ticket(self, ticket_id: str, target: TicketStatus, actor: str, reason: str = ""):
@@ -284,6 +329,20 @@ class InMemoryStore:
             ticket.updated_at = now
         return ticket
 
-    def get_return_by_idempotency(self, idempotency_key: str) -> Optional[ReturnRequest]:
+    def get_return_by_idempotency(
+        self, user_id: str, idempotency_key: str
+    ) -> Optional[ReturnRequest]:
         request_id = self.idempotency_index.get(idempotency_key)
-        return self.return_requests.get(request_id) if request_id else None
+        request = self.return_requests.get(request_id) if request_id else None
+        if request is not None and request.user_id != user_id:
+            raise ToolError("FORBIDDEN", "当前用户无权访问该退货申请。")
+        return request
+
+    def get_ticket_by_idempotency(
+        self, user_id: str, idempotency_key: str
+    ) -> Optional[Ticket]:
+        ticket_id = self.ticket_idempotency_index.get(idempotency_key)
+        ticket = self.tickets.get(ticket_id) if ticket_id else None
+        if ticket is not None and ticket.user_id != user_id:
+            raise ToolError("FORBIDDEN", "当前用户无权访问该工单。")
+        return ticket
