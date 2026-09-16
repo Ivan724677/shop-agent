@@ -1,0 +1,54 @@
+[
+  {
+    "id": "policy_standard_v1",
+    "title": "普通商品七天无理由退货规则",
+    "text": "普通商品签收后七天内可申请无理由退货；运输中的商品不可申请。",
+    "tags": ["standard", "return", "no_reason_return", "seven_days"],
+    "version": "v1",
+    "effective_from": "2026-01-01",
+    "effective_to": "2026-08-31",
+    "priority": 10,
+    "policy_family": "standard_return"
+  },
+  {
+    "id": "policy_standard_v2",
+    "title": "普通商品十四天退货规则",
+    "text": "普通商品自签收之日起十四天内可申请无理由退货；运输中的商品不可申请。",
+    "tags": ["standard", "return", "no_reason_return", "fourteen_days"],
+    "version": "v2",
+    "effective_from": "2026-09-01",
+    "priority": 10,
+    "policy_family": "standard_return"
+  },
+  {
+    "id": "policy_custom_v1",
+    "title": "定制商品售后例外规则",
+    "text": "定制商品不支持无理由退货；存在质量问题时适用定制商品质量例外规则。",
+    "tags": ["custom", "return", "no_reason_return", "exception"],
+    "version": "v1",
+    "effective_from": "2026-01-01",
+    "priority": 10,
+    "policy_family": "custom_return"
+  },
+  {
+    "id": "policy_custom_quality_exception_v2",
+    "title": "定制商品质量问题例外规则",
+    "text": "定制商品存在质量问题时，可在签收后三十天内申请退货或换货；该规则优先于定制商品无理由退货规则。",
+    "tags": ["custom", "quality", "return", "exception", "thirty_days"],
+    "version": "v2",
+    "effective_from": "2026-01-01",
+    "priority": 30,
+    "policy_family": "custom_return",
+    "exception_of": "policy_custom_v1"
+  },
+  {
+    "id": "policy_quality_v1",
+    "title": "质量问题售后规则",
+    "text": "普通商品出现质量问题时，可在签收后三十天内申请退货或换货。",
+    "tags": ["standard", "quality", "return", "thirty_days"],
+    "version": "v1",
+    "effective_from": "2026-01-01",
+    "priority": 10,
+    "policy_family": "quality_return"
+  }
+]

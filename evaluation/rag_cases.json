@@ -1,0 +1,104 @@
+[
+  {
+    "case_id": "custom_quality_exception",
+    "query": "这个定制杯子有质量问题，能不能退？",
+    "metadata_filter": {
+      "product_type": "custom",
+      "reason": "quality_issue"
+    },
+    "required_aspects": ["custom", "quality", "return", "thirty_days"],
+    "expected_evidence": ["policy_custom_quality_exception_v2"],
+    "expected_status": "GROUNDED"
+  },
+  {
+    "case_id": "agentic_query_rewrite_after_weak_recall",
+    "query": "政策 abc123",
+    "metadata_filter": {
+      "product_type": "custom",
+      "reason": "quality_issue"
+    },
+    "required_aspects": ["custom", "quality", "return", "thirty_days"],
+    "expected_evidence": ["policy_custom_quality_exception_v2"],
+    "expected_status": "GROUNDED"
+  },
+  {
+    "case_id": "custom_no_reason_exception",
+    "query": "定制商品我不想要了，可以无理由退吗？",
+    "metadata_filter": {
+      "product_type": "custom",
+      "reason": "no_reason_return"
+    },
+    "required_aspects": ["custom", "return", "no_reason_return"],
+    "expected_evidence": ["policy_custom_v1"],
+    "expected_status": "GROUNDED"
+  },
+  {
+    "case_id": "standard_v1_as_of_july",
+    "query": "普通商品无理由退货有几天？",
+    "metadata_filter": {
+      "product_type": "standard",
+      "reason": "no_reason_return"
+    },
+    "as_of": "2026-07-16",
+    "required_aspects": ["standard", "return", "no_reason_return"],
+    "expected_evidence": ["policy_standard_v1"],
+    "expected_status": "GROUNDED"
+  },
+  {
+    "case_id": "standard_v2_as_of_september",
+    "query": "普通商品无理由退货有几天？",
+    "metadata_filter": {
+      "product_type": "standard",
+      "reason": "no_reason_return"
+    },
+    "as_of": "2026-09-02",
+    "required_aspects": ["standard", "return", "no_reason_return"],
+    "expected_evidence": ["policy_standard_v2"],
+    "expected_status": "GROUNDED"
+  },
+  {
+    "case_id": "same_precedence_version_conflict",
+    "query": "普通商品退货期限到底是多少天？",
+    "metadata_filter": {
+      "product_type": "standard",
+      "reason": "no_reason_return"
+    },
+    "as_of": "2026-07-16",
+    "required_aspects": ["standard", "return"],
+    "expected_evidence": [],
+    "expected_status": "UNCERTAIN",
+    "expected_conflict": true,
+    "expect_no_retrieval": true,
+    "extra_documents": [
+      {
+        "id": "policy_standard_conflict_a",
+        "title": "普通商品五天退货规则（冲突测试）",
+        "text": "普通商品签收后五天内可申请无理由退货。",
+        "tags": ["standard", "return", "no_reason_return", "five_days"],
+        "version": "v9",
+        "effective_from": "2026-01-01",
+        "priority": 10,
+        "policy_family": "standard_return"
+      },
+      {
+        "id": "policy_standard_conflict_b",
+        "title": "普通商品六十天退货规则（冲突测试）",
+        "text": "普通商品签收后六十天内可申请无理由退货。",
+        "tags": ["standard", "return", "no_reason_return", "sixty_days"],
+        "version": "v10",
+        "effective_from": "2026-01-01",
+        "priority": 10,
+        "policy_family": "standard_return"
+      }
+    ]
+  },
+  {
+    "case_id": "irrelevant_non_policy_query",
+    "query": "你好，帮我查一下订单现在到哪里了？",
+    "metadata_filter": {},
+    "policy_sensitive": false,
+    "expected_evidence": [],
+    "expected_status": "NO_RETRIEVAL",
+    "expect_no_retrieval": true
+  }
+]

@@ -214,6 +214,12 @@ def _trace_metrics(agent: Any) -> tuple[list[str], list[str], int, int, int]:
             if isinstance(usage, dict):
                 prompt_tokens += int(usage.get("prompt_tokens", 0) or 0)
                 completion_tokens += int(usage.get("completion_tokens", 0) or 0)
+        if event.event_type == "route" and detail.get("model_invoked"):
+            model_requests += 1
+            usage = detail.get("model_usage", {})
+            if isinstance(usage, dict):
+                prompt_tokens += int(usage.get("prompt_tokens", 0) or 0)
+                completion_tokens += int(usage.get("completion_tokens", 0) or 0)
     return tool_calls, tool_errors, model_requests, prompt_tokens, completion_tokens
 
 

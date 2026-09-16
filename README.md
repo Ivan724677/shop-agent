@@ -1,6 +1,6 @@
 # 风险感知售后客服 Agent
 
-这是一个面向电商售后场景的系统型 Agent 项目。当前完成了阶段一业务模拟器、阶段二 DeepSeek V4 Flash 单 Agent ReAct baseline、阶段三结构化状态与多轮记忆 Agent，以及阶段四 MCP 工具协议与可靠性层。
+这是一个面向电商售后场景的系统型 Agent 项目。当前完成了阶段一业务模拟器、阶段二 DeepSeek V4 Flash 单 Agent ReAct baseline、阶段三结构化状态与多轮记忆 Agent、阶段四 MCP 工具协议与可靠性层、阶段五确定性优先 Router 与多专家 Agent，以及阶段六 Agentic RAG 与政策证据推理。
 
 阶段一的目标不是做一个更长的聊天 Demo，而是让后续 Agent 面对真实的业务约束：用户、商品、订单项、拆分物流、退货申请、退款流水和人工工单彼此独立，所有高风险写操作都必须经过服务端校验和状态转换。
 
@@ -22,6 +22,13 @@
 - 对照评测：让 baseline 与结构化 Agent 在相同初始数据和相同场景上分别运行，统计最终状态、工具错误、不安全写入、调用次数和 token。
 - MCP 工具层：统一 `tools/list`、`tools/call`、输入/输出 schema、scope 权限、会话身份注入和 JSON-RPC stdio 入口。
 - 工具可靠性：真实执行超时、只读重试、熔断器、写操作幂等、未知提交对账和脱敏操作审计。
+- 多专家路由：订单/物流、政策、交易、人工升级四个专家，规则先路由，复杂请求才调用模型复核。
+- 专家安全边界：每个专家有独立工具白名单，交易专家必须复核冻结范围、政策证据、金额和确认状态。
+- 路由可观测性：记录状态快照、规则原因、模型候选、专家链、协议错误和最终回退原因。
+- 政策 RAG：提供 TF-IDF 向量、混合检索、查询重写、加权重排、元数据过滤和证据校验对照。
+- Agentic RAG：由 Planner 自主选择直接回答、检索、重写、验证、澄清或升级，可多步检索；安全护栏只限制不安全结果，不替代 Planner。
+- 政策可靠性：按生效日期、版本、优先级和例外关系处理政策；过期证据和同级版本冲突不能进入最终回答。
+- RAG 评测：覆盖例外政策、版本切换、同级冲突和无关问题，统计证据命中、冲突识别、拒绝过期证据、检索次数和无检索率。
 
 ## 目录
 
@@ -42,9 +49,34 @@ agent-project/
 │   ├── policy.py          # 基于状态的确定性工具决策与故障恢复
 │   ├── agent.py           # 阶段三主执行链、记忆和 trace
 │   └── cli.py             # 结构化 Agent 交互入口
+├── routing/
+│   ├── models.py          # 路由决策、专家结果和二次路由候选契约
+│   ├── rules.py           # 基于结构化状态的确定性路由和复杂度检测
+│   ├── semantic_router.py # DeepSeek 复杂请求二次路由候选
+│   └── router.py          # 主 Router、模型约束和专家结果校验
+├── experts/
+│   ├── base.py            # 专家协议、MCP 调用边界和工具白名单
+│   ├── order_logistics.py # 订单/物流查询与商品实体落地
+│   ├── policy.py          # 政策证据、资格与退款金额计算
+│   ├── transaction.py     # 确认绑定、退货写入与未知提交对账
+│   └── handoff.py         # 幂等人工工单与未知提交恢复
+├── multi_agent/
+│   ├── agent.py           # Router、专家链、记忆和 trace 装配
+│   └── cli.py             # 阶段五交互入口
 ├── evaluation/
 │   ├── comparison.py      # 同场景双版本回放与指标计算
-│   └── compare_cli.py     # 真实 DeepSeek 对比入口
+│   ├── compare_cli.py     # 真实 DeepSeek 对比入口
+│   ├── rag_comparison.py   # Vector/Hybrid/Agentic RAG 对照引擎
+│   ├── rag_compare_cli.py  # 阶段六离线评测入口
+│   └── rag_cases.json      # 例外、版本冲突和无关问题评测集
+├── rag/
+│   ├── models.py           # 政策文档、检索、Planner、证据校验契约
+│   ├── retrieval.py        # TF-IDF Vector 与 Hybrid 检索
+│   ├── rewrite.py          # 查询扩展和多步检索重写
+│   ├── evidence.py         # 生效期、优先级、例外和冲突校验
+│   ├── planner.py          # 离线 Planner 与 DeepSeek 结构化 Planner
+│   ├── agent.py            # Agentic RAG 主循环、护栏、缓存和 trace
+│   └── cli.py              # 阶段六交互入口
 ├── mcp_server/
 │   ├── catalog.py         # MCP 工具目录、input/output schema 与权限元数据
 │   ├── validation.py      # 确定性 JSON Schema 边界校验
@@ -72,6 +104,7 @@ agent-project/
 ├── test_stage_one.py      # 领域模型、状态机、工具和语料测试
 ├── test_stage_three.py    # 多轮状态、确认范围、冲突与故障恢复测试
 ├── test_stage_four.py     # MCP、权限、超时、重试、熔断、幂等与审计测试
+├── test_stage_five.py     # 路由、专家边界、模型回退与多 Agent 故障测试
 └── test_comparison.py     # baseline 失效注入与结构化 Agent 对照测试
 ```
 
@@ -309,6 +342,121 @@ python3 -m unittest -v test_stage_four.py
 
 完整设计、不变量、重试边界和未知状态处理见 [`docs/stage4-mcp-reliability.md`](docs/stage4-mcp-reliability.md)。
 
+## 阶段五：Router 与多个专家 Agent
+
+阶段五保留阶段三单策略 Agent，不原地替换它。新增版本的执行链是：
+
+```text
+用户输入
+→ 确定性提取 + DeepSeek 语义候选
+→ StateReducer 形成结构化状态
+→ Router 先按意图、缺失字段、确认状态和风险规则路由
+→ 复杂/冲突/多意图时调用 DeepSeek 二次路由
+→ 订单/物流 → 政策 → 交易，或人工升级
+→ 所有工具仍经过同一个 MCP 权限与可靠性边界
+```
+
+四个专家的权限不是提示词约定，而是代码白名单：
+
+| 专家 | 允许工具 | 不能做什么 |
+|---|---|---|
+| 订单/物流 | `list_orders`、`get_order`、`list_shipments` | 不能检索政策或写退货 |
+| 政策 | `search_policy`、`calculate_refund` | 不能把“符合政策”当成已确认 |
+| 交易 | `create_return_request`、`get_return_status` | 不能缺少政策证据、金额或确认范围 |
+| 人工升级 | `create_ticket`、`get_ticket_status` | 不能代替交易专家创建退货 |
+
+模型 Router 只生成候选。它不能把未知请求直接路由到交易执行，也不能删掉退货链中的订单校验和政策校验。专家输出还要通过 `ExpertResult` 协议校验；专家身份不匹配、非法下一跳、缺少回复或缺少升级原因都会被拒绝并转人工。
+
+启动阶段五在线版本：
+
+```bash
+python3 -m multi_agent.cli --user-id U001
+```
+
+不调用模型的确定性调试模式：
+
+```bash
+python3 -m multi_agent.cli --offline --user-id U001
+```
+
+`routes` 查看每轮路由决策；`trace` 查看解析、路由、专家和工具完整链路；`audit` 查看 MCP 审计。真实 DeepSeek 三版本对比仍使用：
+
+```bash
+python3 -m evaluation.compare_cli --limit 8 --output reports/comparison.json
+```
+
+该命令现在同时回放 `react_baseline`、`structured_state` 和 `multi_expert`。阶段五专项测试：
+
+```bash
+python3 -m unittest -v test_stage_five.py
+```
+
+完整路由规则、安全不变量、失败案例和面试表达见 [`docs/stage5-router-experts.md`](docs/stage5-router-experts.md)。
+
+## 阶段六：Agentic RAG 与政策推理
+
+阶段六把“查政策”从一个固定工具调用升级成可评测的知识推理环节。系统同时保留三个对照版本：
+
+| 版本 | 行为 | 目的 |
+|---|---|---|
+| Vector | TF-IDF 字符 n-gram 相似度 | 观察纯向量召回的覆盖和噪声 |
+| Hybrid | 向量分数 + lexical overlap，并按加权分数重排 | 观察关键词和语义信号互补效果 |
+| Agentic | DeepSeek/离线 Planner 自主选择动作，并可多步检索 | 观察“是否需要查、如何补查、何时停止”对可靠性的影响 |
+
+Agentic RAG 的真实执行链是：
+
+```text
+用户问题
+→ Planner 观察问题、当前证据、缺失维度和冲突
+→ answer_directly / retrieve / rewrite_query / verify / clarify / escalate
+→ Vector 或 Hybrid 检索
+→ 证据合并、重写查询、再次检索
+→ EvidenceValidator 校验生效期、适用范围、优先级、例外和版本冲突
+→ 证据充分才允许 grounded answer，否则澄清或人工升级
+```
+
+这里的 Planner 不是把固定 `if/else` 改名为 Agent。在线模式由 DeepSeek 通过 `emit_rag_plan` 结构化函数选择下一步，下一轮会重新观察已召回证据，因此可以出现 `retrieve → rewrite_query → verify → answer_directly` 的多步轨迹。离线启用 `HeuristicRAGPlanner`，只是为了让相同轨迹可重复回放、测试和做消融实验。
+
+代码护栏不代替 Planner 的决策，只约束决策的安全边界：政策敏感问题没有验证证据时禁止直接回答；检索次数和总步数有限；冲突不能猜版本；最终暴露给上层的 `evidence_ids` 只来自校验通过的证据。原始召回仍保存在 trace 中，方便定位“召回了但为什么不能引用”。
+
+政策文档包含 `effective_from`、`effective_to`、`version`、`priority`、`policy_family` 和 `exception_of`。例如定制商品质量问题会选择质量例外规则，而不会把定制商品无理由退货限制错误地作为结论；同一政策族、同一生效日、同一优先级但正文不同的版本会输出 `POLICY_VERSION_CONFLICT` 并进入 `UNCERTAIN`。
+
+运行阶段六离线交互：
+
+```bash
+python3 -m rag.cli --mode agentic --offline --product-type custom --reason quality_issue
+python3 -m rag.cli --mode vector
+python3 -m rag.cli --mode hybrid
+```
+
+运行对照评测（不需要 API key）：
+
+```bash
+python3 -m evaluation.rag_compare_cli
+python3 -m evaluation.rag_compare_cli \
+  --case-id custom_quality_exception \
+  --case-id same_precedence_version_conflict \
+  --output reports/rag_comparison.json
+```
+
+评测输出会分别统计原始召回命中率、最终证据命中率、accepted evidence rate、冲突识别率、过期/低优先级证据拒绝率、低相关度拒绝率、平均检索次数、无检索率、Planner 调用次数、grounded rate 和 uncertainty rate。`evaluation/rag_cases.json` 中的冲突文档只对冲突场景局部生效，不会污染其他版本切换场景。
+
+接入 DeepSeek 在线 Planner：
+
+```bash
+export DEEPSEEK_API_KEY="你的新 API key"
+export DEEPSEEK_MODEL="deepseek-v4-flash"
+python3 -m rag.cli --mode agentic
+```
+
+阶段六专项测试：
+
+```bash
+python3 -m unittest -v test_stage_six.py
+```
+
+完整设计、失败模式、评测解释和面试表达见 [`docs/stage6-agentic-rag.md`](docs/stage6-agentic-rag.md)。
+
 ## 场景格式
 
 每条场景同时保存用户输入、初始业务状态、期望意图、必需槽位、允许动作、禁止动作、期望最终状态和风险等级。它不是普通的聊天样例，而是后续端到端评测的 ground truth。
@@ -377,4 +525,89 @@ ToolGateway	  参数缺失	       Agent 忘了传 idempotency_key
 LLM 的判断只是"建议"，代码层以数据为权威，逐层校验，高风险路径上不信任模型的任何输出。
 
 
-后续阶段可以在此基础上加入多 Agent Router、完善政策检索、增加用户模拟器和 Monitor Agent，并用这些场景做端到端回放和消融实验。
+后续阶段可以在此基础上完善政策检索、增加用户模拟器和 Monitor Agent，并用这些场景做端到端回放、路由混淆矩阵和消融实验。
+
+## 阶段六生产级 Agentic RAG
+
+阶段六现在同时保留两条链路：`VectorRetriever`/`HybridRetriever` 是无外部依赖的历史对照基线；`--production` 才启用真实生产链路：
+
+```text
+Policy JSON
+  → ingestion / chunking / content hash
+  → immutable index version
+  → real dense embedding + TF-IDF sparse index
+  → dense/sparse weighted retrieval + metadata/date filter
+  → Agent Planner: answer / retrieve / rewrite / verify / escalate
+  → EvidenceValidator: precedence / exception / conflict / coverage
+  → DeepSeek grounded structured generation
+  → claim-level citation gate
+  → RAGTelemetry / MonitorAgent / JSONL sink
+```
+
+生成和 embedding 是两个独立服务：DeepSeek Chat 负责 Planner 与最终回答，embedding 必须配置一个真正提供 `/embeddings` 的服务，不能把 Chat 模型当作 embedding 模型。离线 `hash` provider 只用于测试闭环，不代表语义效果。
+
+构建、发布和回滚索引：
+
+```bash
+# 离线测试闭环，不需要网络
+python3 -m rag.ingest_cli \
+  --embedding-mode hash \
+  --index-root /tmp/policy-index \
+  --version policy-offline-v1 \
+  --publish
+
+# 真实 embedding 服务；密钥只从环境变量读取
+export EMBEDDING_API_KEY="你的 embedding 服务 key"
+export EMBEDDING_BASE_URL="https://你的-embedding-endpoint/v1"
+export EMBEDDING_MODEL="你的中文 embedding 模型"
+python3 -m rag.ingest_cli \
+  --embedding-mode env \
+  --index-root var/rag_indexes \
+  --version policy-2026-09-08 \
+  --publish
+
+# 回滚只移动 CURRENT alias，不覆盖任何历史版本
+python3 -m rag.ingest_cli \
+  --index-root var/rag_indexes \
+  --rollback policy-2026-09-01
+```
+
+启动真实 Agentic RAG：
+
+```bash
+export DEEPSEEK_API_KEY="你的 DeepSeek key"
+export DEEPSEEK_MODEL="deepseek-v4-flash"
+python3 -m rag.cli \
+  --mode agentic \
+  --production \
+  --index-root var/rag_indexes \
+  --embedding-mode env \
+  --generator-mode llm \
+  --monitor-sink var/rag_monitor.jsonl
+```
+
+生产回答不是直接拼接文档：模型必须通过 `emit_grounded_answer` 返回 answer、claims、citation IDs 和 abstain 状态；只有通过引用 ID、数字一致性和基本 claim/evidence 支持校验的结果才会以 `GROUNDED` 返回，否则进入 `UNCERTAIN`。每次运行都记录 run ID、Planner/Generator 次数、检索次数、停止原因、延迟、证据 ID、citation ID 和告警。
+
+评测线上 telemetry（可以配合人工抽检或延迟到达的标签）：
+
+```bash
+python3 -m evaluation.online_rag_cli \
+  --telemetry var/rag_monitor.jsonl \
+  --labels evaluation/online_labels.json \
+  --output reports/online_eval.json
+```
+
+`online_labels.json` 支持如下格式，`expected_evidence_ids` 可以填 document ID，也可以填 chunk citation ID：
+
+```json
+[
+  {
+    "run_id": "某次 telemetry 中的 run_id",
+    "expected_status": "GROUNDED",
+    "expected_evidence_ids": ["policy_custom_quality_exception_v2#chunk-001"],
+    "user_feedback": "helpful"
+  }
+]
+```
+
+索引版本目录包含 `manifest.json` 和 `chunks.jsonl`。版本构建后不可覆盖，发布只修改 `CURRENT` 指针；manifest 记录语料 hash、embedding model/dimension、文档数、chunk 数和构建时间。当前实现是可离线运行的 reference implementation，单机 JSON 索引适合项目演示、回放和面试实验；线上大规模部署时应将同一生命周期接口接到对象存储、向量数据库/BM25 服务、原子 alias、OTel/指标系统和标注平台。

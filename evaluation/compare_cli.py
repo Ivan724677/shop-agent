@@ -1,7 +1,7 @@
 """真实 DeepSeek 回放的对照评测入口。
 
 运行：python3 -m evaluation.compare_cli [--limit N] [--output out.json]
-读 DEEPSEEK_API_KEY，对 golden 场景分别跑 react_baseline 与 structured_state，
+读 DEEPSEEK_API_KEY，对 golden 场景分别跑 baseline、structured 和 multi_expert，
 输出 summaries + results 的 JSON 报告。
 """
 
@@ -15,6 +15,12 @@ from pathlib import Path
 from baseline.deepseek_client import DeepSeekClient
 from baseline.react_agent import ReActBaselineAgent
 from baseline.tool_catalog import SessionToolExecutor
+from multi_agent.agent import MultiExpertCustomerServiceAgent
+from rag.agent import AgenticRAG
+from rag.planner import DeepSeekRAGPlanner
+from rag.retrieval import load_policy_corpus
+from routing.router import MultiAgentRouter
+from routing.semantic_router import DeepSeekSemanticRouter
 from scenarios.loader import load_directory
 from structured.agent import StructuredCustomerServiceAgent
 from structured.semantic_parser import DeepSeekSemanticParser
@@ -58,9 +64,30 @@ def main() -> int:
             executor,
         )
 
+    def multi_expert_factory(user_id: str):
+        executor = SessionToolExecutor(user_id=user_id)
+        rag_agent = AgenticRAG(
+            load_policy_corpus(),
+            planner=DeepSeekRAGPlanner(client),
+        )
+        return (
+            MultiExpertCustomerServiceAgent(
+                semantic_parser=DeepSeekSemanticParser(client),
+                tool_executor=executor,
+                router=MultiAgentRouter(DeepSeekSemanticRouter(client)),
+                rag_agent=rag_agent,
+                user_id=user_id,
+            ),
+            executor,
+        )
+
     results, summaries = compare_variants(
         scenarios,
-        {"react_baseline": baseline_factory, "structured_state": structured_factory},
+        {
+            "react_baseline": baseline_factory,
+            "structured_state": structured_factory,
+            "multi_expert": multi_expert_factory,
+        },
     )
     payload = {
         "summaries": [asdict(summary) for summary in summaries],

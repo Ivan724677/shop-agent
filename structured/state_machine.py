@@ -21,6 +21,11 @@ DIALOGUE_STATE_MACHINE = StateMachine(
     [
         TransitionRule("idle", "collecting_info"),
         TransitionRule("idle", "resolving_entities"),
+        # A recovered/pre-populated task may already contain a server-verified
+        # order fact and item scope.  In that case the policy expert can be
+        # entered directly; the expert still performs its own scope/evidence
+        # guards before any downstream action.
+        TransitionRule("idle", "checking_policy"),
         TransitionRule("collecting_info", "resolving_entities"),
         TransitionRule("collecting_info", "checking_policy"),
         TransitionRule("resolving_entities", "collecting_info"),
