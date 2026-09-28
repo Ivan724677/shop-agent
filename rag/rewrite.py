@@ -11,6 +11,8 @@ from .models import RetrievalQuery
 class RewriteCandidate:
     text: str
     reason: str
+    missing_aspects: list[str]
+    added_terms: list[str]
 
 
 class QueryRewriter:
@@ -29,15 +31,22 @@ class QueryRewriter:
             terms.extend(["质量问题", "三十天"])
         elif any(word in normalized for word in ("无理由", "不想要", "不合适", "能退") ):
             terms.extend(["无理由退货", "签收", "七天"])
-        if missing_aspects:
-            terms.extend(missing_aspects)
-        rewritten = " ".join(dict.fromkeys([query.text] + terms))
+        missing = list(dict.fromkeys(missing_aspects or []))
+        if missing:
+            terms.extend(missing)
+        added = list(dict.fromkeys(terms))
+        rewritten = " ".join(dict.fromkeys([query.text] + added))
         if rewritten == query.text:
             return []
         return [
             RewriteCandidate(
                 text=rewritten,
-                reason="补充商品类型、原因和政策时限等检索维度",
+                reason=(
+                    "首轮证据未覆盖必需事实维度：" + "、".join(missing)
+                    if missing else "首轮语义相关证据不足，补充商品类型、原因和政策时限"
+                ),
+                missing_aspects=missing,
+                added_terms=added,
             )
         ]
 
@@ -50,5 +59,6 @@ class QueryRewriter:
             as_of=query.as_of,
             metadata_filter=dict(query.metadata_filter),
             required_tags=query.required_tags,
+            permission_scopes=query.permission_scopes,
             pass_number=query.pass_number + 1,
         )

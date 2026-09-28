@@ -14,11 +14,11 @@
 
 | 版本 | 是否主动决定检索 | 主要机制 | 暴露的问题 |
 |---|---:|---|---|
-| Vector | 否 | TF-IDF 字符 unigram/bigram | 只看相似度，容易有召回噪声 |
-| Hybrid | 否 | Vector + lexical overlap + rerank | 关键词补召回，但仍然一次检索 |
-| Agentic | 是 | Planner + 检索/重写/验证循环 | 可以少查、补查、验证和升级 |
+| BM25 | 否 | Okapi BM25 + 长度归一化 | 精确词项召回，但仍然一次检索 |
+| Hybrid | 否 | Dense embedding + BM25 | 语义和关键词互补，但仍然一次检索 |
+| Agentic | 是 | 显式 Graph + 双层 Grader + 重写/验证循环 | 可以少查、补查、验证和升级 |
 
-Vector/Hybrid 是对照组，不代表生产级语义检索。项目使用标准库实现它们，是为了让实验不依赖外部服务，能够清楚测量结构性改动的贡献。后续如果替换成 embedding/vector DB，只需要替换 Retriever 接口，不改变 Planner、Validator 和评测契约。
+BM25/离线 Hybrid 是对照组，不代表生产级语义检索。项目使用标准库实现它们，是为了让实验不依赖外部服务，能够清楚测量结构性改动的贡献。生产模式替换为真实 embedding + BM25，只需要注入 Retriever，不改变 Graph、Grader、Validator 和评测契约。
 
 ## 3. Agentic RAG 为什么不是固定 Workflow RAG
 
@@ -50,9 +50,9 @@ if "退货" in query:
 
 ## 4. 检索与重排
 
-### 4.1 Vector Retriever
+### 4.1 BM25 Retriever
 
-`VectorRetriever` 使用政策标题和正文建立 TF-IDF 字符特征。中文问题同时产生字符 unigram 和 bigram，例如“定制商品”“质量问题”会保留局部短语信号。它输出：
+`BM25Retriever` 使用 Okapi BM25，保留中文 unigram/bigram，并通过 `k1` 饱和词频、`b` 按文档长度归一化，避免长政策仅因重复词多而获得假高分。旧 `VectorRetriever` 名称只作为兼容别名，内部不再使用 TF-IDF。
 
 - `vector_score`；
 - 命中的词项；
@@ -61,10 +61,10 @@ if "退货" in query:
 
 ### 4.2 Hybrid Retriever
 
-`HybridRetriever` 在同一候选集合上计算 lexical overlap，并使用：
+离线 `HybridRetriever` 使用 BM25 和词项覆盖率；生产 `DenseHybridRetriever` 使用真实 embedding cosine 和 BM25：
 
 ```text
-rerank_score = 0.55 × vector_score + 0.45 × lexical_score
+rerank_score = 0.65 × dense_score + 0.35 × normalized_bm25_score
 ```
 
 这个重排是显式可解释的，不是让生成模型凭感觉重新排序。返回结果仍保留三个分数，便于分析“向量召回了但关键词不匹配”或“关键词命中但语义相似度弱”的失败样本。
@@ -131,7 +131,7 @@ Agentic RAG 的目标不是让模型“想得更长”，而是让模型在事�
 python3 -m evaluation.rag_compare_cli
 ```
 
-每个 case 同时跑 Vector、Hybrid 和离线 Agentic 三个版本。评测输出包含：
+每个 case 同时跑 BM25、Hybrid 和离线 Agentic 三个版本。默认数据集为 60 条静态 curated、待领域人员最终审核的政策场景。评测输出包含：
 
 - `raw_retrieval_hit_rate`：预期文档是否出现在原始召回中；
 - `hit_rate`：预期文档是否最终进入通过校验的证据集合；
@@ -172,11 +172,11 @@ Agentic RAG 不能绕过阶段五的订单归属、用户确认、退款金额�
 
 可以这样说明：
 
-> 我没有把 RAG 写成每个问题都固定检索一次的链路。Planner 通过结构化动作决定是否查、使用哪种检索、证据不足时是否重写以及何时验证或升级；离线 Planner 让轨迹可复现，在线 Planner 使用 DeepSeek。系统不把 Planner 的理由当事实，最终答案只能引用经过生效期、优先级、例外关系、相关度和冲突校验的证据。开发中我专门注入了定制商品质量例外和同级政策版本冲突：前者必须选高优先级例外，后者必须拒答并转人工。这样可以量化比较一次性 Vector/Hybrid RAG 与 Agentic RAG 在证据命中、冲突识别、检索次数和 grounded rate 上的差异。
+> 我没有把 RAG 写成每个问题都固定检索一次的链路。显式 Graph 中的 Planner 决定是否查、是否重写以及何时验证或升级；检索后先经过确定性业务过滤，再由 DeepSeek Document Grader 判断语义相关性，最后仍由 EvidenceValidator 决定政策权威性。开发中我专门注入了定制商品质量例外、过期政策和同级版本冲突：例外必须按优先级生效，过期政策必须过滤，冲突必须拒答转人工。这样可以量化比较 BM25/Hybrid 与 Agentic RAG 在证据命中、重写收益、冲突识别和无检索率上的差异。
 
 ## 11. 生产化实现：dense、sparse、generation 与生命周期
 
-前面的 `VectorRetriever` 和 `HybridRetriever` 保留为 dependency-free baseline，便于做消融实验，但它们不应被描述为生产 semantic RAG。生产入口使用以下替换：
+前面的 `BM25Retriever` 和 `HybridRetriever` 保留为 dependency-free baseline，便于做消融实验，但它们不应被描述为生产 semantic RAG。生产入口使用以下替换：
 
 ### 11.1 Embedding provider
 
@@ -194,11 +194,11 @@ Embedding 服务和 DeepSeek Chat 服务分离，原因是两者的模型、向�
 
 ```text
 dense_score  = cosine(query_embedding, chunk_embedding)
-sparse_score = TF-IDF cosine(query_terms, chunk_terms)
+sparse_score = normalized BM25(query_terms, chunk_terms)
 rerank_score = 0.65 × dense_score + 0.35 × sparse_score
 ```
 
-这不是“dense 召回后再看词重合”这一伪 hybrid：sparse 分支拥有自己的 TF-IDF 统计空间，两个分支都参与最终排序；返回结果保留三个分数，支持分析语义召回、精确关键词召回和融合排序的失败样本。规模化部署可把 sparse 分支替换为 BM25 或独立搜索服务，但不改变 `Retriever` 和 evidence contract。
+这不是“dense 召回后再看词重合”这一伪 hybrid：BM25 和 dense 分支独立打分，再进入融合排序；返回结果保留三个分数，支持分析语义召回、精确关键词召回和融合排序的失败样本。规模化部署可把本地 BM25 替换为 OpenSearch/Elasticsearch，而不改变 `Retriever` 和 evidence contract。
 
 ### 11.3 Ingestion 与索引生命周期
 
@@ -235,3 +235,97 @@ build version → 校验 manifest/chunk/vector → atomic write → publish CURR
 ### 11.6 真实生产运行的边界
 
 项目中的本地 JSON index 和 JSONL monitor 是可验证的 reference implementation，而非声称已经具备互联网规模的高可用基础设施。要部署到生产，需要把相同接口替换为：对象存储 + 原子 alias 的向量数据库、BM25/混合检索服务、embedding/Chat 独立服务、OTel 指标与 trace、标注/反馈平台、密钥管理、限流和多副本。核心安全契约已经在本地实现：索引不可覆盖、模型维度不匹配拒绝启动、证据冲突拒答、引用失败拒答、模型异常进入不确定态。
+
+## 12. 显式 Graph 与双层证据判断
+
+升级后的 `AgenticRAG` 对外 API 不变，内部由 `AgenticRAGGraph` 执行。节点和允许转换在 `graph_definition` 中显式声明：
+
+```text
+Guardrail
+→ Planner
+→ Retrieve
+→ Deterministic Business Filter
+→ Semantic Document Grader
+→ Rewrite / Verify
+→ Generate
+→ Citation Validate
+→ End / Escalate
+```
+
+每个节点只有单一职责：
+
+- `GuardrailNode`：判断是否为政策问题，并记录缺失的商品类型或售后原因；
+- `RetrieveNode`：调用 BM25、离线 Hybrid 或生产 dense+BM25 Retriever；
+- `DeterministicBusinessFilter`：检查发布状态、生效期、商品类型、售后原因、读取权限和有效版本冲突；
+- `GradeNode`：仅判断语义相关性、事实维度覆盖和噪声召回；
+- `RewriteNode`：记录为什么重写、缺少哪些方面和增加了哪些检索词；
+- `VerifyNode`：由 `EvidenceValidator` 重新执行优先级、版本、例外关系和冲突校验；
+- `GenerateNode`：只使用最终 accepted evidence 生成回答；
+- `CitationNode`：验证 claim 的引用、数字和支持关系；
+- `EscalateNode`：证据不足、冲突或模型链路异常时进入 `UNCERTAIN`。
+
+Document Grader 永远不能覆盖业务过滤结果。线上使用 `DeepSeekDocumentGrader`，离线回放使用 `HeuristicDocumentGrader`，二者遵守同一结构化输出：
+
+```json
+{
+  "citation_id": "policy_id#chunk-001",
+  "relevant": true,
+  "score": 0.95,
+  "covered_aspects": ["custom", "quality", "return"],
+  "missing_aspects": [],
+  "noise": false,
+  "reason": "直接覆盖定制商品质量问题退货资格"
+}
+```
+
+LLM 只拥有语义相关性的判断权，不拥有以下权限：
+
+- 宣布未发布政策可用；
+- 绕过政策生效日期；
+- 绕过商品类型或售后原因；
+- 读取无权限政策；
+- 在版本冲突中自行选择一条；
+- 授权退款、退货或其他写操作。
+
+## 13. 查询重写审计
+
+每次重写包含两个 trace 事件。`rewrite` 记录输入决策：
+
+```text
+original_query
+rewritten_query
+planner_reason
+rewrite_reason
+missing_aspects_before
+added_terms
+evidence_before
+```
+
+二次检索和 Verify 完成后，`rewrite_outcome` 补充：
+
+```text
+new_evidence
+missing_aspects_after
+coverage_improved
+```
+
+因此评测不再只统计“是否调用了 rewrite”，还可以判断重写是否带来了新证据或减少了缺失维度。默认离线报告增加 `rewrite_rate` 和 `rewrite_success_rate`。
+
+## 14. 60 条静态待领域审核政策评测集
+
+`evaluation/rag_cases.json` 使用共享 profile 减少重复元数据，但其中 60 条 query、类别、预期证据、状态和 review notes 都是静态可审阅的。当前 `review_status=pending_domain_owner_review`，避免把代码生成/模型整理误报为业务人员已签字审核；你完成逐条领域确认后再改为 reviewed。每个类别 5 条：
+
+1. 普通商品；
+2. 定制商品；
+3. 质量问题；
+4. 无理由退货；
+5. 版本切换；
+6. 例外规则；
+7. 模糊描述；
+8. 同义改写；
+9. 对抗性问题；
+10. 过期政策；
+11. 版本冲突；
+12. 不需要政策检索的问题。
+
+评测报告同时输出整体和按类别拆分的指标。当前离线回放用于验证 Graph、业务过滤、重写和停止行为；真实 embedding、DeepSeek Planner、DeepSeek Grader 和 DeepSeek Generator 的线上数字应单独记录，不能与离线 heuristic 数字混称。

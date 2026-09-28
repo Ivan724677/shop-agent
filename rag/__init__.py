@@ -1,6 +1,8 @@
 """Stage-six retrieval and Agentic RAG components."""
 
 from .agent import AgenticRAG, AgenticRAGError
+from .bm25 import BM25Index
+from .business_filter import BusinessFilterResult, DeterministicBusinessFilter
 from .citation import CitationValidation, CitationValidator
 from .dense_retrieval import DenseHybridRetriever
 from .embeddings import (
@@ -16,6 +18,14 @@ from .generation import (
     DeterministicAnswerGenerator,
     GeneratedAnswer,
 )
+from .grading import (
+    DeepSeekDocumentGrader,
+    DocumentGrade,
+    DocumentGrader,
+    DocumentGradingResult,
+    HeuristicDocumentGrader,
+)
+from .graph import AgenticRAGGraph, RAGGraphState
 from .index import IndexManifest, IndexedChunk, IndexLifecycleError, PersistentIndex
 from .ingestion import ChunkingConfig, PolicyChunker, PolicyIngestionPipeline
 from .monitoring import MonitorAgent, RAGMonitor, RAGTelemetry
@@ -30,7 +40,7 @@ from .models import (
     RetrievedEvidence,
 )
 from .planner import DeepSeekRAGPlanner, HeuristicRAGPlanner
-from .retrieval import HybridRetriever, PolicyCorpus, VectorRetriever, load_policy_corpus
+from .retrieval import BM25Retriever, HybridRetriever, PolicyCorpus, VectorRetriever, load_policy_corpus
 from .rewrite import QueryRewriter
 
 __all__ = [
@@ -39,18 +49,28 @@ __all__ = [
     "AgenticRAGResult",
     "AnswerClaim",
     "AnswerGenerator",
+    "AgenticRAGGraph",
+    "BM25Index",
+    "BM25Retriever",
+    "BusinessFilterResult",
     "ChunkingConfig",
     "CitationValidation",
     "CitationValidator",
     "DeepSeekAnswerGenerator",
+    "DeepSeekDocumentGrader",
     "DenseHybridRetriever",
     "DeterministicAnswerGenerator",
+    "DeterministicBusinessFilter",
     "DeepSeekRAGPlanner",
     "EmbeddingProvider",
+    "DocumentGrade",
+    "DocumentGrader",
+    "DocumentGradingResult",
     "EvidenceValidation",
     "EvidenceValidator",
     "GeneratedAnswer",
     "HashEmbeddingProvider",
+    "HeuristicDocumentGrader",
     "HeuristicRAGPlanner",
     "HybridRetriever",
     "IndexLifecycleError",
@@ -69,6 +89,7 @@ __all__ = [
     "RetrievalQuery",
     "RetrievedEvidence",
     "RAGMonitor",
+    "RAGGraphState",
     "RAGTelemetry",
     "SentenceTransformerEmbeddingProvider",
     "VectorRetriever",

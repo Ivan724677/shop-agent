@@ -126,6 +126,8 @@ class PolicyExpert(BaseExpert):
                 "evidence_ids": result.evidence_ids,
                 "validation": result.validation.as_dict(),
                 "retrieval_count": result.retrieval_count,
+                "grader_calls": result.grader_calls,
+                "rewrite_count": result.rewrite_count,
             },
             tool="agentic_rag",
             observed_turn=state.turn_index,

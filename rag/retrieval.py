@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import json
-import math
 import re
-from collections import Counter
 from datetime import date
 from pathlib import Path
 from typing import Any, Protocol
 
 from .models import PolicyDocument, RetrievalQuery, RetrievedEvidence
+from .bm25 import BM25Index
 
 
 _TOKEN_PATTERN = re.compile(r"[A-Za-z0-9_]+|[\u4e00-\u9fff]")
@@ -82,6 +81,11 @@ class PolicyCorpus:
         for document in self.documents:
             if not document.is_active(query.as_of):
                 continue
+            required_scopes = {
+                str(scope) for scope in document.metadata.get("required_scopes", [])
+            }
+            if required_scopes and not required_scopes.issubset(query.permission_scopes):
+                continue
             if version and document.version != version:
                 continue
             required = set(query.required_tags)
@@ -99,67 +103,73 @@ class PolicyCorpus:
         return result
 
 
-class VectorRetriever:
-    """TF-IDF cosine retrieval, intentionally dependency-free for a baseline."""
+class BM25Retriever:
+    """Okapi BM25 sparse retrieval with length normalization."""
 
     def __init__(self, corpus: PolicyCorpus) -> None:
         self.corpus = corpus
-        self._tokens = {document.document_id: tokenize(document.title + " " + document.text) for document in corpus.documents}
-        document_frequency = Counter()
-        for tokens in self._tokens.values():
-            document_frequency.update(set(tokens))
-        self._idf = {
-            token: math.log((1 + len(corpus.documents)) / (1 + count)) + 1
-            for token, count in document_frequency.items()
+        self._tokens = {
+            document.document_id: tokenize(document.title + " " + document.text)
+            for document in corpus.documents
         }
+        self._index = BM25Index(self._tokens)
 
     def search(self, query: RetrievalQuery, top_k: int = 5) -> list[RetrievedEvidence]:
         candidates = self.corpus.filter(query)
-        query_tokens = Counter(tokenize(query.text))
-        query_norm = math.sqrt(
-            sum((count * self._idf.get(token, 1.0)) ** 2 for token, count in query_tokens.items())
+        query_tokens = tokenize(query.text)
+        scores = self._index.scores(
+            query_tokens,
+            [document.document_id for document in candidates],
+            normalize=True,
         )
         scored: list[RetrievedEvidence] = []
         for document in candidates:
-            doc_counts = Counter(self._tokens[document.document_id])
-            numerator = sum(
-                (query_count * self._idf.get(token, 1.0))
-                * (doc_counts[token] * self._idf.get(token, 1.0))
-                for token, query_count in query_tokens.items()
-            )
-            doc_norm = math.sqrt(
-                sum((count * self._idf.get(token, 1.0)) ** 2 for token, count in doc_counts.items())
-            )
-            score = numerator / (query_norm * doc_norm) if query_norm and doc_norm else 0.0
-            matched = sorted(set(query_tokens) & set(doc_counts))
+            score = scores.get(document.document_id, 0.0)
+            matched = sorted(set(query_tokens) & set(self._tokens[document.document_id]))
             scored.append(
                 RetrievedEvidence(
                     document=document,
-                    vector_score=score,
+                    lexical_score=score,
+                    rerank_score=score,
                     matched_terms=matched,
                     retrieval_pass=query.pass_number,
                     query=query.text,
                 )
             )
-        scored.sort(key=lambda item: item.vector_score, reverse=True)
+        scored.sort(key=lambda item: item.lexical_score, reverse=True)
         return scored[:top_k]
 
 
-class HybridRetriever(VectorRetriever):
-    """Vector + lexical overlap. Metadata filtering occurs before scoring."""
+class VectorRetriever(BM25Retriever):
+    """Backward-compatible stage-six name; scoring is BM25, not TF-IDF."""
+
+    def search(self, query: RetrievalQuery, top_k: int = 5) -> list[RetrievedEvidence]:
+        results = super().search(query, top_k)
+        for item in results:
+            item.vector_score = item.lexical_score
+            item.lexical_score = 0.0
+            item.rerank_score = item.vector_score
+        return results
+
+
+class HybridRetriever(BM25Retriever):
+    """BM25 plus exact term-coverage reranking for the offline baseline."""
 
     def search(self, query: RetrievalQuery, top_k: int = 5) -> list[RetrievedEvidence]:
         candidates = self.corpus.filter(query)
         query_terms = set(tokenize(query.text))
-        vector_results = {item.evidence_id: item for item in super().search(query, top_k=len(candidates))}
+        bm25_results = {
+            item.evidence_id: item
+            for item in super().search(query, top_k=len(candidates))
+        }
         scored: list[RetrievedEvidence] = []
         for document in candidates:
-            item = vector_results[document.document_id]
+            item = bm25_results[document.document_id]
             doc_terms = set(self._tokens[document.document_id])
             matched = sorted(query_terms & doc_terms)
-            lexical = len(matched) / len(query_terms) if query_terms else 0.0
-            item.lexical_score = lexical
-            item.rerank_score = 0.55 * item.vector_score + 0.45 * lexical
+            coverage = len(matched) / len(query_terms) if query_terms else 0.0
+            item.vector_score = coverage
+            item.rerank_score = 0.7 * item.lexical_score + 0.3 * coverage
             item.matched_terms = matched
             scored.append(item)
         scored.sort(key=lambda item: item.rerank_score, reverse=True)

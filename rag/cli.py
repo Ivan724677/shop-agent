@@ -14,6 +14,7 @@ from .agent import AgenticRAG
 from .dense_retrieval import DenseHybridRetriever
 from .embeddings import load_embedding_provider
 from .generation import DeepSeekAnswerGenerator
+from .grading import DeepSeekDocumentGrader
 from .index import PersistentIndex
 from .monitoring import RAGMonitor
 from .models import RetrievalQuery
@@ -22,8 +23,8 @@ from .retrieval import HybridRetriever, VectorRetriever, load_policy_corpus
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Stage-six Vector/Hybrid/Agentic RAG")
-    parser.add_argument("--mode", choices=["vector", "hybrid", "agentic"], default="agentic")
+    parser = argparse.ArgumentParser(description="Stage-six BM25/Hybrid/Agentic RAG")
+    parser.add_argument("--mode", choices=["bm25", "vector", "hybrid", "agentic"], default="agentic")
     parser.add_argument("--model", default=None)
     parser.add_argument("--as-of", default="2026-07-16")
     parser.add_argument("--product-type", choices=["standard", "custom"], default=None)
@@ -33,6 +34,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--index-root", default=None)
     parser.add_argument("--embedding-mode", choices=["env", "local", "hash"], default="env")
     parser.add_argument("--generator-mode", choices=["llm", "deterministic"], default=None)
+    parser.add_argument("--grader-mode", choices=["llm", "heuristic"], default=None)
     parser.add_argument("--monitor-sink", default=None)
     return parser
 
@@ -53,13 +55,14 @@ def main() -> int:
         }.items()
         if value is not None
     }
-    if args.mode == "vector":
+    if args.mode in {"bm25", "vector"}:
         retriever = VectorRetriever(corpus)
     elif args.mode == "hybrid":
         retriever = HybridRetriever(corpus)
     else:
         retriever = None
         generator = None
+        grader = None
         if args.offline:
             planner = HeuristicRAGPlanner()
             model_name = "offline-heuristic"
@@ -71,14 +74,16 @@ def main() -> int:
                 return 2
             planner = DeepSeekRAGPlanner(client)
             model_name = client.model
+            if (args.generator_mode or "llm") == "llm":
+                generator = DeepSeekAnswerGenerator(client)
+            if (args.grader_mode or "llm") == "llm":
+                grader = DeepSeekDocumentGrader(client)
         if args.production:
             try:
                 provider = load_embedding_provider("hash" if args.offline else args.embedding_mode)
                 index_root = args.index_root or Path(__file__).parents[1] / "var" / "rag_indexes"
                 persistent_index = PersistentIndex(index_root)
                 retriever = DenseHybridRetriever(persistent_index, provider, corpus)
-                if not args.offline and (args.generator_mode or "llm") == "llm":
-                    generator = DeepSeekAnswerGenerator(client)
             except (ValueError, RuntimeError, OSError) as exc:
                 print(f"生产 RAG 配置错误：{exc}", file=sys.stderr)
                 return 2
@@ -86,6 +91,7 @@ def main() -> int:
             corpus,
             planner=planner,
             retriever=retriever,
+            grader=grader,
             generator=generator,
             monitor=RAGMonitor(args.monitor_sink) if args.monitor_sink else None,
             as_of=as_of,
@@ -114,6 +120,8 @@ def main() -> int:
                 "retrieval_count": result.retrieval_count,
                 "planner_calls": result.planner_calls,
                 "generator_calls": result.generator_calls,
+                "grader_calls": result.grader_calls,
+                "rewrite_count": result.rewrite_count,
                 "run_id": result.run_id,
                 "stop_reason": result.stop_reason,
                 "latency_ms": round(result.latency_ms, 2),

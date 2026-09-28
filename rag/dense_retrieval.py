@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import math
-from collections import Counter
 from datetime import date
-from typing import Any
 
+from .bm25 import BM25Index
 from .embeddings import EmbeddingProvider
 from .index import IndexedChunk, PersistentIndex, corpus_hash
 from .models import PolicyDocument, RetrievalQuery, RetrievedEvidence
@@ -45,17 +44,12 @@ class DenseHybridRetriever:
         if self.manifest.corpus_hash != corpus_hash(corpus.documents):
             raise ValueError("索引语料 hash 与当前政策语料不匹配，请重新构建或切换索引。")
         self._documents = {document.document_id: document for document in corpus.documents}
-        self._tokens = {
+        tokens = {
             chunk.chunk_id: tokenize(chunk.title + " " + chunk.text)
             for chunk in self.chunks
         }
-        document_frequency = Counter()
-        for tokens in self._tokens.values():
-            document_frequency.update(set(tokens))
-        self._idf = {
-            token: math.log((1 + len(self.chunks)) / (1 + count)) + 1
-            for token, count in document_frequency.items()
-        }
+        self._tokens = tokens
+        self._bm25 = BM25Index(tokens)
 
     def search(self, query: RetrievalQuery, top_k: int = 5) -> list[RetrievedEvidence]:
         if top_k <= 0:
@@ -66,15 +60,18 @@ class DenseHybridRetriever:
         query_vector = self.provider.embed_query(query.text)
         if len(query_vector) != self.manifest.embedding_dimension:
             raise ValueError("查询 embedding 维度与索引不一致。")
-        query_tokens = Counter(tokenize(query.text))
-        query_vector_sparse = self._tfidf(query_tokens)
+        query_tokens = tokenize(query.text)
+        sparse_scores = self._bm25.scores(
+            query_tokens,
+            [chunk.chunk_id for chunk in candidates],
+            normalize=True,
+        )
         scored: list[RetrievedEvidence] = []
         for chunk in candidates:
             dense_score = cosine(query_vector, chunk.vector)
-            chunk_tokens = Counter(self._tokens[chunk.chunk_id])
-            chunk_terms = set(chunk_tokens)
+            chunk_terms = set(self._tokens[chunk.chunk_id])
             matched = sorted(set(query_tokens) & chunk_terms)
-            sparse_score = cosine(query_vector_sparse, self._tfidf(chunk_tokens))
+            sparse_score = sparse_scores.get(chunk.chunk_id, 0.0)
             combined = self.dense_weight * dense_score + self.sparse_weight * sparse_score
             document = self._documents.get(chunk.document_id) or _document_from_chunk(chunk)
             scored.append(
@@ -107,18 +104,6 @@ class DenseHybridRetriever:
         scored.sort(key=lambda item: (item.rerank_score, item.vector_score, item.lexical_score), reverse=True)
         return scored[:top_k]
 
-    def _tfidf(self, counts: Counter[str]) -> list[float]:
-        """Return a deterministic sparse-space vector for the current index.
-
-        The representation is dense only at this small reference boundary; the
-        scoring is TF-IDF cosine over the indexed vocabulary. A production
-        deployment can replace this method with a BM25/SPLADE service without
-        changing the Retriever protocol or evidence contract.
-        """
-        vocabulary = sorted(self._idf)
-        vector = [counts[token] * self._idf[token] for token in vocabulary]
-        return vector
-
     @staticmethod
     def _applicable(chunk: IndexedChunk, query: RetrievalQuery) -> bool:
         if chunk.status != "published":
@@ -128,6 +113,11 @@ class DenseHybridRetriever:
         if start > query.as_of or (end and end < query.as_of):
             return False
         if query.metadata_filter.get("version") and query.metadata_filter["version"] != chunk.version:
+            return False
+        required_scopes = {
+            str(scope) for scope in chunk.metadata.get("required_scopes", [])
+        }
+        if required_scopes and not required_scopes.issubset(query.permission_scopes):
             return False
         required = set(query.required_tags)
         product_type = query.metadata_filter.get("product_type")

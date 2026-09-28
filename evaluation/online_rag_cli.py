@@ -65,6 +65,8 @@ def evaluate(telemetry_rows: list[dict[str, Any]], labels: dict[str, dict[str, A
             retrieval_count=int(row.get("retrieval_count", 0)),
             planner_calls=int(row.get("planner_calls", 0)),
             generator_calls=int(row.get("generator_calls", 0)),
+            grader_calls=int(row.get("grader_calls", 0)),
+            rewrite_count=int(row.get("rewrite_count", 0)),
             latency_ms=float(row.get("latency_ms", 0.0)),
             evidence_count=int(row.get("evidence_count", 0)),
             accepted_evidence_count=int(row.get("accepted_evidence_count", 0)),

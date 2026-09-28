@@ -25,6 +25,8 @@ class RAGTelemetry:
     accepted_evidence_count: int
     citation_valid: bool | None
     model_error: str | None
+    grader_calls: int = 0
+    rewrite_count: int = 0
     evidence_ids: list[str] = field(default_factory=list)
     citation_ids: list[str] = field(default_factory=list)
     alerts: list[str] = field(default_factory=list)
@@ -66,6 +68,9 @@ class RAGMonitor:
             "average_latency_ms": sum(sample.latency_ms for sample in samples) / len(samples),
             "average_retrieval_count": sum(sample.retrieval_count for sample in samples) / len(samples),
             "average_planner_calls": sum(sample.planner_calls for sample in samples) / len(samples),
+            "average_grader_calls": sum(sample.grader_calls for sample in samples) / len(samples),
+            "average_rewrite_count": sum(sample.rewrite_count for sample in samples) / len(samples),
+            "rewrite_rate": sum(sample.rewrite_count > 0 for sample in samples) / len(samples),
             "grounded_rate": sum(sample.status == "GROUNDED" for sample in samples) / len(samples),
             "uncertain_rate": sum(sample.status == "UNCERTAIN" for sample in samples) / len(samples),
             "alert_counts": dict(alerts),

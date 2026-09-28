@@ -1,5 +1,6 @@
 import unittest
 from datetime import date
+from pathlib import Path
 
 from baseline.deepseek_client import ModelCompletion
 from experts.policy import PolicyExpert
@@ -17,6 +18,7 @@ from rag import (
 from rag.models import PlanAction, PlanDecision
 from rag.planner import DeepSeekRAGPlanner
 from rag.retrieval import RetrievedEvidence
+from evaluation.rag_comparison import load_cases
 
 
 class ScriptedPlanner:
@@ -88,6 +90,20 @@ class StageSixRetrievalTests(unittest.TestCase):
         self.assertTrue(hybrid)
         self.assertTrue(all(item.lexical_score == 0 for item in vector))
         self.assertTrue(any(item.lexical_score > 0 for item in hybrid))
+
+    def test_curated_rag_benchmark_has_sixty_review_ready_cases(self):
+        cases = load_cases(Path(__file__).parent / "evaluation" / "rag_cases.json")
+        categories = {case.category for case in cases}
+
+        self.assertEqual(len(cases), 60)
+        self.assertTrue(all(case.review_notes for case in cases))
+        self.assertTrue(all(not case.reviewed for case in cases))
+        self.assertTrue({
+            "standard_product", "custom_product", "quality_issue",
+            "no_reason_return", "version_switch", "exception_rule",
+            "ambiguous_expression", "synonym_rewrite", "adversarial",
+            "expired_policy", "version_conflict", "no_retrieval",
+        }.issubset(categories))
 
     def test_metadata_filter_excludes_inapplicable_policy(self):
         request = RetrievalQuery(
@@ -174,7 +190,10 @@ class StageSixRetrievalTests(unittest.TestCase):
 
         self.assertEqual(result.status, "NO_RETRIEVAL")
         self.assertEqual(result.retrieval_count, 0)
-        self.assertEqual([item["event"] for item in result.trace], ["plan"])
+        self.assertEqual(
+            [item["event"] for item in result.trace],
+            ["guardrail", "evidence_verify", "plan"],
+        )
 
     def test_agentic_rag_reuses_verified_evidence_without_second_retrieval(self):
         rag = AgenticRAG(self.corpus)
@@ -228,8 +247,11 @@ class StageSixRetrievalTests(unittest.TestCase):
             [item["action"] for item in result.trace if item["event"] == "plan"],
             ["retrieve", "rewrite_query", "answer_directly"],
         )
-        first_retrieval = next(item for item in result.trace if item["event"] == "retrieve")
-        self.assertIn("LOW_RELEVANCE_EVIDENCE_REJECTED", first_retrieval["validation"]["reason_codes"])
+        first_grade = next(item for item in result.trace if item["event"] == "document_grade")
+        self.assertFalse(first_grade["result"]["relevant_ids"])
+        rewrite_outcome = next(item for item in result.trace if item["event"] == "rewrite_outcome")
+        self.assertTrue(rewrite_outcome["coverage_improved"])
+        self.assertIn("policy_custom_quality_exception_v2", rewrite_outcome["new_evidence"][0])
 
     def test_planner_can_choose_direct_answer_without_policy_retrieval(self):
         planner = ScriptedPlanner([

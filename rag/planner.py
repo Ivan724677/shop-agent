@@ -25,7 +25,7 @@ RAG_PLAN_TOOL = {
                 "reason": {"type": "string"},
                 "confidence": {"type": "number", "minimum": 0, "maximum": 1},
                 "query": {"type": "string"},
-                "retrieval_mode": {"type": "string", "enum": ["vector", "hybrid"]},
+                "retrieval_mode": {"type": "string", "enum": ["bm25", "hybrid", "vector"]},
                 "metadata_filter": {"type": "object"},
             },
             "required": ["action", "reason", "confidence", "query", "retrieval_mode", "metadata_filter"],
@@ -140,7 +140,7 @@ class DeepSeekRAGPlanner:
             raise ValueError("RAG Planner 的 reason/query 必须是字符串。")
         if not isinstance(raw.get("metadata_filter"), dict):
             raise ValueError("RAG Planner 的 metadata_filter 必须是对象。")
-        if raw.get("retrieval_mode") not in {"vector", "hybrid"}:
+        if raw.get("retrieval_mode") not in {"bm25", "vector", "hybrid"}:
             raise ValueError("RAG Planner 的 retrieval_mode 无效。")
         if isinstance(raw.get("confidence"), bool) or not isinstance(raw.get("confidence"), (int, float)):
             raise ValueError("RAG Planner 的 confidence 必须是数字。")

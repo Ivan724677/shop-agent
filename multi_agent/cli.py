@@ -13,6 +13,7 @@ from rag.agent import AgenticRAG
 from rag.dense_retrieval import DenseHybridRetriever
 from rag.embeddings import load_embedding_provider
 from rag.generation import DeepSeekAnswerGenerator
+from rag.grading import DeepSeekDocumentGrader
 from rag.index import PersistentIndex
 from rag.monitoring import RAGMonitor
 from rag.planner import DeepSeekRAGPlanner
@@ -59,7 +60,10 @@ def main() -> int:
             return 2
         semantic_parser = DeepSeekSemanticParser(client)
         router = MultiAgentRouter(DeepSeekSemanticRouter(client))
-        rag_kwargs = {}
+        rag_kwargs = {
+            "generator": DeepSeekAnswerGenerator(client),
+            "grader": DeepSeekDocumentGrader(client),
+        }
         if args.production_rag:
             try:
                 corpus = load_policy_corpus()
@@ -68,6 +72,7 @@ def main() -> int:
                 rag_kwargs = {
                     "retriever": DenseHybridRetriever(PersistentIndex(index_root), provider, corpus),
                     "generator": DeepSeekAnswerGenerator(client),
+                    "grader": DeepSeekDocumentGrader(client),
                     "monitor": RAGMonitor(args.monitor_sink) if args.monitor_sink else None,
                 }
             except (ValueError, RuntimeError, OSError) as exc:

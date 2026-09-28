@@ -9,12 +9,13 @@ from typing import Any
 from rag.agent import AgenticRAG
 from rag.models import PolicyDocument, RetrievalQuery
 from rag.planner import HeuristicRAGPlanner
-from rag.retrieval import HybridRetriever, PolicyCorpus, VectorRetriever
+from rag.retrieval import BM25Retriever, HybridRetriever, PolicyCorpus
 
 
 @dataclass(frozen=True)
 class RAGEvaluationCase:
     case_id: str
+    category: str
     query: str
     expected_evidence: list[str]
     metadata_filter: dict[str, Any]
@@ -25,6 +26,8 @@ class RAGEvaluationCase:
     required_aspects: list[str] | None = None
     expect_no_retrieval: bool = False
     extra_documents: list[dict[str, Any]] = field(default_factory=list)
+    reviewed: bool = True
+    review_notes: str = ""
 
 
 def evaluate_case(corpus: PolicyCorpus, case: RAGEvaluationCase) -> list[dict[str, Any]]:
@@ -35,7 +38,7 @@ def evaluate_case(corpus: PolicyCorpus, case: RAGEvaluationCase) -> list[dict[st
         metadata_filter=case.metadata_filter,
     )
     variants: list[tuple[str, Any]] = [
-        ("vector", VectorRetriever(case_corpus)),
+        ("bm25", BM25Retriever(case_corpus)),
         ("hybrid", HybridRetriever(case_corpus)),
     ]
     rows: list[dict[str, Any]] = []
@@ -45,6 +48,7 @@ def evaluate_case(corpus: PolicyCorpus, case: RAGEvaluationCase) -> list[dict[st
         found = {item.evidence_id for item in results}
         rows.append({
             "case_id": case.case_id,
+            "category": case.category,
             "variant": name,
             "hit": _case_hit(case, set(validation.evidence_ids), validation),
             "retrieval_hit": _expected_retrieved(case, found),
@@ -59,6 +63,8 @@ def evaluate_case(corpus: PolicyCorpus, case: RAGEvaluationCase) -> list[dict[st
             "expected_no_retrieval_match": False == case.expect_no_retrieval,
             "retrieval_count": 1,
             "planner_calls": 0,
+            "grader_calls": 0,
+            "rewrite_count": 0,
             "validation": validation.as_dict(),
         })
     agentic = AgenticRAG(case_corpus, planner=HeuristicRAGPlanner(), as_of=case.as_of)
@@ -70,6 +76,7 @@ def evaluate_case(corpus: PolicyCorpus, case: RAGEvaluationCase) -> list[dict[st
     )
     rows.append({
         "case_id": case.case_id,
+        "category": case.category,
         "variant": "agentic",
         "hit": _case_hit(case, set(result.evidence_ids), result.validation),
         "retrieval_hit": _expected_retrieved(
@@ -87,6 +94,12 @@ def evaluate_case(corpus: PolicyCorpus, case: RAGEvaluationCase) -> list[dict[st
         "status": result.status,
         "retrieval_count": result.retrieval_count,
         "planner_calls": result.planner_calls,
+        "grader_calls": result.grader_calls,
+        "rewrite_count": result.rewrite_count,
+        "rewrite_improved": any(
+            item.get("event") == "rewrite_outcome" and item.get("coverage_improved")
+            for item in result.trace
+        ),
         "validation": result.validation.as_dict(),
     })
     return rows
@@ -180,11 +193,39 @@ def summarize(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "average_retrieval_count": sum(row["retrieval_count"] for row in selected) / len(selected),
             "no_retrieval_rate": sum(row.get("retrieval_count", 0) == 0 for row in selected) / len(selected),
             "average_planner_calls": sum(row.get("planner_calls", 0) for row in selected) / len(selected),
+            "average_grader_calls": sum(row.get("grader_calls", 0) for row in selected) / len(selected),
+            "rewrite_rate": sum(row.get("rewrite_count", 0) > 0 for row in selected) / len(selected),
+            "rewrite_success_rate": (
+                sum(bool(row.get("rewrite_improved")) for row in selected if row.get("rewrite_count", 0) > 0)
+                / sum(row.get("rewrite_count", 0) > 0 for row in selected)
+                if any(row.get("rewrite_count", 0) > 0 for row in selected) else 0.0
+            ),
             "grounded_answer_rate": sum(row.get("status") == "GROUNDED" for row in selected) / len(selected),
             "uncertainty_rate": sum(row.get("status") == "UNCERTAIN" for row in selected) / len(selected),
             "expected_status_accuracy": sum(bool(row.get("expected_status_match")) for row in selected) / len(selected),
             "expected_conflict_accuracy": sum(bool(row.get("expected_conflict_match")) for row in selected) / len(selected),
             "expected_no_retrieval_accuracy": sum(bool(row.get("expected_no_retrieval_match")) for row in selected) / len(selected),
+        })
+    return output
+
+
+def summarize_by_category(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    output: list[dict[str, Any]] = []
+    pairs = sorted({(row["variant"], row.get("category", "uncategorized")) for row in rows})
+    for variant, category in pairs:
+        selected = [
+            row for row in rows
+            if row["variant"] == variant and row.get("category", "uncategorized") == category
+        ]
+        output.append({
+            "variant": variant,
+            "category": category,
+            "cases": len(selected),
+            "hit_rate": sum(bool(row["hit"]) for row in selected) / len(selected),
+            "expected_status_accuracy": sum(bool(row.get("expected_status_match")) for row in selected) / len(selected),
+            "expected_no_retrieval_accuracy": sum(bool(row.get("expected_no_retrieval_match")) for row in selected) / len(selected),
+            "average_retrieval_count": sum(row.get("retrieval_count", 0) for row in selected) / len(selected),
+            "rewrite_rate": sum(row.get("rewrite_count", 0) > 0 for row in selected) / len(selected),
         })
     return output
 
@@ -195,16 +236,32 @@ def load_cases(path) -> list[RAGEvaluationCase]:
     import json
     from pathlib import Path
 
-    raw = json.loads(Path(path).read_text(encoding="utf-8"))
-    if not isinstance(raw, list):
-        raise ValueError("RAG 评测 case 文件顶层必须是数组。")
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    profiles: dict[str, Any] = {}
+    defaults: dict[str, Any] = {}
+    if isinstance(payload, list):
+        raw = payload
+    elif isinstance(payload, dict) and isinstance(payload.get("cases"), list):
+        raw = payload["cases"]
+        profiles = dict(payload.get("profiles", {}))
+        defaults = dict(payload.get("defaults", {}))
+    else:
+        raise ValueError("RAG 评测文件必须是数组，或包含 cases/profiles 的对象。")
     cases: list[RAGEvaluationCase] = []
-    for item in raw:
+    for source in raw:
+        if not isinstance(source, dict):
+            raise ValueError("RAG 评测 case 必须是对象。")
+        profile_name = source.get("profile")
+        profile = profiles.get(profile_name, {}) if profile_name else {}
+        if profile_name and not isinstance(profile, dict):
+            raise ValueError(f"RAG 评测 profile 无效：{profile_name}")
+        item = {**defaults, **profile, **source}
         if not isinstance(item, dict):
             raise ValueError("RAG 评测 case 必须是对象。")
         cases.append(
             RAGEvaluationCase(
                 case_id=str(item["case_id"]),
+                category=str(item.get("category", "uncategorized")),
                 query=str(item["query"]),
                 expected_evidence=[str(value) for value in item.get("expected_evidence", [])],
                 metadata_filter=dict(item.get("metadata_filter", {})),
@@ -219,6 +276,8 @@ def load_cases(path) -> list[RAGEvaluationCase]:
                 ),
                 expect_no_retrieval=bool(item.get("expect_no_retrieval", False)),
                 extra_documents=list(item.get("extra_documents", [])),
+                reviewed=bool(item.get("reviewed", False)),
+                review_notes=str(item.get("review_notes", "")),
             )
         )
     return cases

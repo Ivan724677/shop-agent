@@ -72,6 +72,7 @@ class RetrievalQuery:
     as_of: date = date(2026, 7, 16)
     metadata_filter: dict[str, Any] = field(default_factory=dict)
     required_tags: frozenset[str] = frozenset()
+    permission_scopes: frozenset[str] = frozenset({"policy:read"})
     pass_number: int = 1
 
 
@@ -120,8 +121,8 @@ class RetrievedEvidence:
 class EvidenceValidation:
     accepted: list[RetrievedEvidence] = field(default_factory=list)
     rejected_ids: list[str] = field(default_factory=list)
-    conflicts: list[str] = field(default_factory=list)#冲突标记
-    missing_aspects: list[str] = field(default_factory=list)#缺失维度
+    conflicts: list[str] = field(default_factory=list)
+    missing_aspects: list[str] = field(default_factory=list)
     reason_codes: list[str] = field(default_factory=list)
     
     @property
@@ -172,6 +173,8 @@ class AgenticRAGResult:
     stop_reason: str = ""
     latency_ms: float = 0.0
     generator_calls: int = 0
+    grader_calls: int = 0
+    rewrite_count: int = 0
     generated_answer: Any | None = None
     citation_validation: Any | None = None
 

@@ -1,5 +1,9 @@
 # 风险感知售后客服 Agent
 
+阶段六升级最终版 Agentic RAG 的完整架构图、设计解释、代码映射、运行方式和评测口径见：
+
+[`README_AGENTIC_RAG_FINAL.md`](README_AGENTIC_RAG_FINAL.md)
+
 这是一个面向电商售后场景的系统型 Agent 项目。当前完成了阶段一业务模拟器、阶段二 DeepSeek V4 Flash 单 Agent ReAct baseline、阶段三结构化状态与多轮记忆 Agent、阶段四 MCP 工具协议与可靠性层、阶段五确定性优先 Router 与多专家 Agent，以及阶段六 Agentic RAG 与政策证据推理。
 
 阶段一的目标不是做一个更长的聊天 Demo，而是让后续 Agent 面对真实的业务约束：用户、商品、订单项、拆分物流、退货申请、退款流水和人工工单彼此独立，所有高风险写操作都必须经过服务端校验和状态转换。
@@ -25,7 +29,7 @@
 - 多专家路由：订单/物流、政策、交易、人工升级四个专家，规则先路由，复杂请求才调用模型复核。
 - 专家安全边界：每个专家有独立工具白名单，交易专家必须复核冻结范围、政策证据、金额和确认状态。
 - 路由可观测性：记录状态快照、规则原因、模型候选、专家链、协议错误和最终回退原因。
-- 政策 RAG：提供 TF-IDF 向量、混合检索、查询重写、加权重排、元数据过滤和证据校验对照。
+- 政策 RAG：提供 BM25、dense+BM25 混合检索、查询重写、语义评分、元数据过滤和证据校验对照。
 - Agentic RAG：由 Planner 自主选择直接回答、检索、重写、验证、澄清或升级，可多步检索；安全护栏只限制不安全结果，不替代 Planner。
 - 政策可靠性：按生效日期、版本、优先级和例外关系处理政策；过期证据和同级版本冲突不能进入最终回答。
 - RAG 评测：覆盖例外政策、版本切换、同级冲突和无关问题，统计证据命中、冲突识别、拒绝过期证据、检索次数和无检索率。
@@ -66,12 +70,16 @@ agent-project/
 ├── evaluation/
 │   ├── comparison.py      # 同场景双版本回放与指标计算
 │   ├── compare_cli.py     # 真实 DeepSeek 对比入口
-│   ├── rag_comparison.py   # Vector/Hybrid/Agentic RAG 对照引擎
+│   ├── rag_comparison.py   # BM25/Hybrid/Agentic RAG 对照引擎
 │   ├── rag_compare_cli.py  # 阶段六离线评测入口
 │   └── rag_cases.json      # 例外、版本冲突和无关问题评测集
 ├── rag/
 │   ├── models.py           # 政策文档、检索、Planner、证据校验契约
-│   ├── retrieval.py        # TF-IDF Vector 与 Hybrid 检索
+│   ├── bm25.py             # Okapi BM25 长度归一化 sparse scorer
+│   ├── retrieval.py        # BM25 与离线 Hybrid 检索
+│   ├── business_filter.py  # 发布/生效期/商品/原因/权限/冲突过滤
+│   ├── grading.py          # Heuristic/DeepSeek Document Grader
+│   ├── graph.py            # 显式 Agentic RAG 节点图和状态
 │   ├── rewrite.py          # 查询扩展和多步检索重写
 │   ├── evidence.py         # 生效期、优先级、例外和冲突校验
 │   ├── planner.py          # 离线 Planner 与 DeepSeek 结构化 Planner
@@ -399,20 +407,23 @@ python3 -m unittest -v test_stage_five.py
 
 | 版本 | 行为 | 目的 |
 |---|---|---|
-| Vector | TF-IDF 字符 n-gram 相似度 | 观察纯向量召回的覆盖和噪声 |
-| Hybrid | 向量分数 + lexical overlap，并按加权分数重排 | 观察关键词和语义信号互补效果 |
-| Agentic | DeepSeek/离线 Planner 自主选择动作，并可多步检索 | 观察“是否需要查、如何补查、何时停止”对可靠性的影响 |
+| BM25 | Okapi BM25 sparse retrieval | 观察长度归一化后的精确词项召回 |
+| Hybrid | 真实 dense embedding + BM25 加权融合 | 观察语义和精确词项信号互补效果 |
+| Agentic | 显式 Graph + Planner + 双层 Grader + 多步检索 | 观察“是否需要查、如何补查、何时停止”对可靠性的影响 |
 
 Agentic RAG 的真实执行链是：
 
 ```text
 用户问题
-→ Planner 观察问题、当前证据、缺失维度和冲突
-→ answer_directly / retrieve / rewrite_query / verify / clarify / escalate
-→ Vector 或 Hybrid 检索
-→ 证据合并、重写查询、再次检索
-→ EvidenceValidator 校验生效期、适用范围、优先级、例外和版本冲突
-→ 证据充分才允许 grounded answer，否则澄清或人工升级
+→ Guardrail Node 判断政策敏感性和缺失信息
+→ Planner Node 选择 answer/retrieve/rewrite/verify/clarify/escalate
+→ Retrieve Node 执行 BM25 或 dense+BM25 hybrid
+→ Business Filter 检查发布、生效期、商品、原因、权限和冲突
+→ Grade Node 判断语义相关性、事实维度覆盖和噪声召回
+→ Rewrite Node 记录缺失维度、补充词、新证据和覆盖改善
+→ Verify Node 由 EvidenceValidator 复核优先级、例外和版本冲突
+→ Generate Node 生成结构化 grounded answer
+→ Citation Node 校验 claim/citation，失败则 Escalate Node 转人工
 ```
 
 这里的 Planner 不是把固定 `if/else` 改名为 Agent。在线模式由 DeepSeek 通过 `emit_rag_plan` 结构化函数选择下一步，下一轮会重新观察已召回证据，因此可以出现 `retrieve → rewrite_query → verify → answer_directly` 的多步轨迹。离线启用 `HeuristicRAGPlanner`，只是为了让相同轨迹可重复回放、测试和做消融实验。
@@ -425,7 +436,7 @@ Agentic RAG 的真实执行链是：
 
 ```bash
 python3 -m rag.cli --mode agentic --offline --product-type custom --reason quality_issue
-python3 -m rag.cli --mode vector
+python3 -m rag.cli --mode bm25
 python3 -m rag.cli --mode hybrid
 ```
 
@@ -434,12 +445,12 @@ python3 -m rag.cli --mode hybrid
 ```bash
 python3 -m evaluation.rag_compare_cli
 python3 -m evaluation.rag_compare_cli \
-  --case-id custom_quality_exception \
-  --case-id same_precedence_version_conflict \
+  --case-id exception_01 \
+  --case-id conflict_01 \
   --output reports/rag_comparison.json
 ```
 
-评测输出会分别统计原始召回命中率、最终证据命中率、accepted evidence rate、冲突识别率、过期/低优先级证据拒绝率、低相关度拒绝率、平均检索次数、无检索率、Planner 调用次数、grounded rate 和 uncertainty rate。`evaluation/rag_cases.json` 中的冲突文档只对冲突场景局部生效，不会污染其他版本切换场景。
+默认评测集包含 60 条静态、逐条带预期与审核说明的待领域审核场景，覆盖普通/定制商品、质量问题、无理由退货、版本切换、例外、模糊表达、同义改写、对抗问题、过期政策、版本冲突和无需检索问题。输出统计原始召回命中率、最终证据命中率、accepted evidence rate、冲突识别率、平均检索次数、无检索率、Planner/Grader 调用次数、rewrite rate、rewrite success rate、grounded rate 和 uncertainty rate。
 
 接入 DeepSeek 在线 Planner：
 
@@ -529,15 +540,16 @@ LLM 的判断只是"建议"，代码层以数据为权威，逐层校验，高�
 
 ## 阶段六生产级 Agentic RAG
 
-阶段六现在同时保留两条链路：`VectorRetriever`/`HybridRetriever` 是无外部依赖的历史对照基线；`--production` 才启用真实生产链路：
+阶段六现在同时保留两条链路：`BM25Retriever`/离线 `HybridRetriever` 是无外部依赖的对照基线；`--production` 启用真实 dense embedding + BM25 生产链路。旧 `VectorRetriever` 仅作为兼容别名，内部不再使用 TF-IDF：
 
 ```text
 Policy JSON
   → ingestion / chunking / content hash
   → immutable index version
-  → real dense embedding + TF-IDF sparse index
+  → real dense embedding + BM25 sparse index
   → dense/sparse weighted retrieval + metadata/date filter
-  → Agent Planner: answer / retrieve / rewrite / verify / escalate
+  → explicit graph: guardrail / planner / retrieve / grade / rewrite / verify
+  → DeepSeek semantic Document Grader
   → EvidenceValidator: precedence / exception / conflict / coverage
   → DeepSeek grounded structured generation
   → claim-level citation gate
@@ -582,6 +594,7 @@ python3 -m rag.cli \
   --production \
   --index-root var/rag_indexes \
   --embedding-mode env \
+  --grader-mode llm \
   --generator-mode llm \
   --monitor-sink var/rag_monitor.jsonl
 ```

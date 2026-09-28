@@ -14,7 +14,7 @@ from pathlib import Path
 
 from rag.retrieval import load_policy_corpus
 
-from .rag_comparison import evaluate_case, load_cases, summarize
+from .rag_comparison import evaluate_case, load_cases, summarize, summarize_by_category
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -49,6 +49,7 @@ def main() -> int:
     payload = {
         "cases": [asdict(case) for case in cases],
         "summaries": summarize(rows),
+        "category_summaries": summarize_by_category(rows),
         "results": rows,
     }
     rendered = json.dumps(payload, ensure_ascii=False, indent=2, default=str) + "\n"
