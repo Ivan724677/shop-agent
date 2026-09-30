@@ -624,3 +624,51 @@ python3 -m evaluation.online_rag_cli \
 ```
 
 索引版本目录包含 `manifest.json` 和 `chunks.jsonl`。版本构建后不可覆盖，发布只修改 `CURRENT` 指针；manifest 记录语料 hash、embedding model/dimension、文档数、chunk 数和构建时间。当前实现是可离线运行的 reference implementation，单机 JSON 索引适合项目演示、回放和面试实验；线上大规模部署时应将同一生命周期接口接到对象存储、向量数据库/BM25 服务、原子 alias、OTel/指标系统和标注平台。
+
+## 阶段七：全栈服务化
+
+阶段七把阶段一到六的 Agent 核心封装为可部署的模块化单体 MVP：
+
+```text
+React 用户端 / 客服工作台
+  → FastAPI + SSE
+  → PostgreSQL：会话、消息、Agent run、checkpoint、事件、确认、人工接管、反馈、RAG 索引元数据
+  → Redis Streams / PubSub / session lock
+  → 现有 Multi-Agent + MCP + Agentic RAG 核心
+```
+
+本地启动：
+
+```bash
+docker compose up --build
+```
+
+访问：
+
+- 用户聊天页和客服工作台：`http://localhost:3000`
+- FastAPI OpenAPI：`http://localhost:8000/docs`
+- Ready 检查：`http://localhost:8000/api/v1/health/ready`
+- Prometheus 文本指标：`http://localhost:8000/api/v1/metrics`
+
+服务化 API 包括：
+
+```text
+POST /api/v1/sessions
+POST /api/v1/sessions/{session_id}/messages
+GET  /api/v1/sessions/{session_id}/events       # SSE
+GET  /api/v1/sessions/{session_id}/runs
+GET  /api/v1/sessions/{session_id}/pending-action
+POST /api/v1/pending-actions/{action_id}/confirm
+POST /api/v1/pending-actions/{action_id}/cancel
+GET  /api/v1/handoffs
+POST /api/v1/handoffs/{handoff_id}/claim
+POST /api/v1/handoffs/{handoff_id}/resolve
+POST /api/v1/runs/{run_id}/feedback
+GET  /api/v1/rag/indexes
+POST /api/v1/rag/indexes/{version}/publish
+POST /api/v1/rag/indexes/{version}/rollback
+```
+
+高风险确认绑定 `pending_action_id + confirmation_token + state_version`，不会把用户输入的一个裸“确认”永久当作授权。Worker 每个 run 持久化 checkpoint、当前节点、route trace 和 Agent trace，并通过 Redis Pub/Sub 推送 SSE；同一 session 使用分布式锁，避免并发消息乱序。
+
+阶段七详细说明见 [`STAGE7.md`](STAGE7.md)。当前 PostgreSQL 已覆盖服务控制面和 Agent 运行数据；订单、物流、退货、退款和工单领域操作仍默认复用阶段一到五的 `InMemoryStore` 测试后端。真正接入线上业务前，还需要替换为 PostgreSQL domain repositories/真实业务服务，并补正式 OIDC/JWT、备份恢复、限流、OpenTelemetry、CI/CD 和压测。
